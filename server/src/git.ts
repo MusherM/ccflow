@@ -69,13 +69,17 @@ export class GitService {
     return { worktreePath, branch };
   }
 
-  snapshot(worktreePath: string, nodeId: string) {
+  snapshot(worktreePath: string, nodeId: string, message?: string) {
     run("git", ["add", "-A"], { cwd: worktreePath });
     const changed = tryRun("git", ["diff", "--cached", "--quiet"], { cwd: worktreePath });
     if (!changed.ok) {
+      const shortId = nodeId.slice(0, 8);
+      const commitMsg = message
+        ? `${message}\n\nCCFlow-Node: ${shortId}`
+        : `${shortId}: CCFlow checkpoint`;
       run(
         "git",
-        ["commit", "-m", `Record CCFlow node ${nodeId}`],
+        ["commit", "-m", commitMsg],
         {
           cwd: worktreePath,
           env: {

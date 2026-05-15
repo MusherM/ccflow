@@ -166,7 +166,7 @@ export function createApp(services: Services) {
       const project = requireProject(services.store, parent.projectId);
       const baseCommit = parent.resultCommit;
       const childId = randomUUID();
-      const useLinearCwd = !parent.worktreePath && parent.kind === "turn";
+      const useLinearCwd = !parent.worktreePath;
       const worktreePath = useLinearCwd ? undefined : nodeWorktreePath(project.id, childId);
 
       if (worktreePath) {
@@ -210,7 +210,7 @@ export function createApp(services: Services) {
       const parent = requireNode(services.store, String(req.params.nodeId));
       const project = requireProject(services.store, parent.projectId);
       const clearId = randomUUID();
-      const useNativeCwd = !parent.worktreePath && parent.kind === "turn";
+      const useNativeCwd = !parent.worktreePath;
       const worktree = useNativeCwd
         ? undefined
         : services.git.createWorktree({
@@ -413,7 +413,9 @@ export function createApp(services: Services) {
       const project = requireProject(services.store, parent.projectId);
       const cwd = nodeCwd(parent, project.repoPath);
 
-      const snapshot = services.git.snapshot(cwd, parent.id);
+      const rawTitle = String(req.body.title ?? "Checkpoint");
+      const nodeTitle = rawTitle.split("\n")[0].trim();
+      const snapshot = services.git.snapshot(cwd, parent.id, rawTitle);
       services.store.updateNode(parent.id, {
         resultCommit: snapshot.commit,
         snapshotRef: snapshot.ref,
@@ -421,7 +423,7 @@ export function createApp(services: Services) {
       });
 
       const clearId = randomUUID();
-      const useNativeCwd = !parent.worktreePath && parent.kind === "turn";
+      const useNativeCwd = !parent.worktreePath;
       const worktree = useNativeCwd
         ? undefined
         : services.git.createWorktree({
@@ -435,14 +437,14 @@ export function createApp(services: Services) {
       const transcriptId = newTranscriptId();
       const summaryId = newSummaryId();
       writeInitialTranscript(transcriptId, `CClear checkpoint from ${parent.id}\n`);
-      writeSummary(summaryId, `${String(req.body.title ?? "Checkpoint")} — snapshot ${snapshot.commit.slice(0, 7)}.`);
+      writeSummary(summaryId, `${nodeTitle} — snapshot ${snapshot.commit.slice(0, 7)}.`);
 
       const node = services.store.createNode({
         id: clearId,
         projectId: project.id,
         parentIds: [parent.id],
         kind: "clear",
-        title: String(req.body.title ?? "Checkpoint"),
+        title: nodeTitle,
         resultCommit: snapshot.commit,
         snapshotRef: snapshot.ref,
         worktreePath: worktree,
@@ -468,8 +470,10 @@ export function createApp(services: Services) {
       const project = requireProject(services.store, active.projectId);
       const cwd = nodeCwd(active, project.repoPath);
 
+      const title = String(req.body.title ?? "Diverge");
+
       // 1. Snapshot current state
-      const snapshot = services.git.snapshot(cwd, active.id);
+      const snapshot = services.git.snapshot(cwd, active.id, title);
       services.store.updateNode(active.id, {
         resultCommit: snapshot.commit,
         snapshotRef: snapshot.ref,
@@ -499,14 +503,14 @@ export function createApp(services: Services) {
       const transcriptId = newTranscriptId();
       const summaryId = newSummaryId();
       writeInitialTranscript(transcriptId, `Diverge from ${active.id} via parent ${parentId}\n`);
-      writeSummary(summaryId, `Exploration branch: ${String(req.body.title ?? "Diverge")} from ${parent.title}.`);
+      writeSummary(summaryId, `Exploration branch: ${title} from ${parent.title}.`);
 
       const node = services.store.createNode({
         id: divergeId,
         projectId: project.id,
         parentIds: [parentId],
         kind: "branch",
-        title: String(req.body.title ?? "Diverge"),
+        title,
         resultCommit: baseCommit,
         snapshotRef: parent.snapshotRef,
         worktreePath,

@@ -91,6 +91,9 @@ def cmd_cclear(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     title = args.summary or "Checkpoint"
+    if args.summary_file:
+        with open(args.summary_file) as f:
+            title = f.read().strip()
     node_id = active["id"]
     result = api.cclear(node_id, title)
     if result.get("ok"):
@@ -174,23 +177,23 @@ def cmd_init(args: argparse.Namespace) -> None:
 
 
 def _install_slash_commands(repo_path: str) -> None:
-    """Copy slash command templates into .claude/commands/ with correct paths."""
-    import shutil
-
+    """Copy slash command templates from CCFlow's own .claude/commands/ccflow/."""
     commands_dir = os.path.join(repo_path, ".claude", "commands", "ccflow")
     os.makedirs(commands_dir, exist_ok=True)
 
-    source_dir = os.path.join(_find_ccflow_root(), "commands")
+    ccflow_root = _find_ccflow_root()
+    source_dir = os.path.join(ccflow_root, ".claude", "commands", "ccflow")
     if not os.path.isdir(source_dir):
         print(f"  警告: 未找到命令模板目录 {source_dir}")
         return
 
-    ccflow_root = _find_ccflow_root()
-    for fname in ["cclear.md", "diverge.md"]:
+    for fname in os.listdir(source_dir):
+        if not fname.endswith(".md"):
+            continue
         src = os.path.join(source_dir, fname)
         dst = os.path.join(commands_dir, fname)
         if os.path.isfile(src):
-            content = open(src).read().replace("__CCFLOW_ROOT__", ccflow_root)
+            content = open(src).read()
             open(dst, "w").write(content)
             print(f"  已安装: .claude/commands/ccflow/{fname}")
 
@@ -247,6 +250,7 @@ def main() -> None:
     # cclear
     p_clear = sub.add_parser("cclear", help="创建 checkpoint 节点并 git commit")
     p_clear.add_argument("--summary", default="", help="会话摘要（节点标题）")
+    p_clear.add_argument("--summary-file", default="", help="从文件读取完整 commit message（首行为节点标题）")
     p_clear.add_argument("--cwd", help="工作目录（自动检测）")
 
     # diverge

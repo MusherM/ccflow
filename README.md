@@ -28,7 +28,7 @@ CCFlow 是 Claude Code 的工作流管理工具。它在不侵入 cc 原生体�
 | Server | `server/` | Node.js + Express + SQLite | REST API、git worktree/merge/snapshot、tmux 终端桥接 |
 | CLI | `cmd/ccflow-cli/` | Python | cc 通过 Bash tool 调用的子命令（cclear、diverge、init） |
 | TUI | `tui/` | Python + Textual | 终端内的 DAG 节点图可视化和交互管理 |
-| Commands | `commands/` | Markdown | cc 自定义 slash command 模板（cclear.md、diverge.md） |
+| Commands | `.claude/commands/ccflow/` | Markdown | cc 自定义 slash command 模板（cclear.md、diverge.md） |
 
 ## 快速开始
 
