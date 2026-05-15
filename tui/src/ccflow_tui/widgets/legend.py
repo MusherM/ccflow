@@ -42,8 +42,7 @@ class BranchLegend(Widget):
             short = cur_node.summary[:50]
             segments.append(Segment(f"= {short}", Style(color=Color.from_ansi(7))))
 
-        strip = Strip(segments)
-        if strip.cell_length < width:
-            padding = " " * (width - strip.cell_length)
-            strip = Strip([*strip.segments, Segment(padding)])
-        return strip
+        cell_length = sum(s.cell_length for s in segments)
+        if cell_length < width:
+            segments.append(Segment(" " * (width - cell_length)))
+        return Strip(segments)

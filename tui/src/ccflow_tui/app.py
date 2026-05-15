@@ -5,7 +5,7 @@ Terminal UI for visualizing and managing the conversation workflow DAG.
 Supports keyboard and mouse navigation, multi-select across branches,
 diverge (fork), and merge operations.
 
-Run:  cd design-prototypes/ccflow-tui && uv run textual run src/ccflow_tui/app.py
+Run:  cd tui && uv run ccflow-tui
 """
 
 from __future__ import annotations

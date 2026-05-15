@@ -200,17 +200,16 @@ def cmd_tui(args: argparse.Namespace) -> None:
     # Ensure server runs first
     ensure_server()
 
-    # The TUI lives in design-prototypes/ccflow-tui/
+    # The TUI lives in tui/
     cwd = args.cwd or os.getcwd()
     repo_root = _find_ccflow_root()
-    tui_dir = os.path.join(repo_root, "design-prototypes", "ccflow-tui")
+    tui_dir = os.path.join(repo_root, "tui")
 
     os.environ["CCFLOW_CWD"] = cwd
     os.environ["CCFLOW_SERVER_URL"] = SERVER_URL
 
     subprocess.run(
-        ["uv", "run", "textual", "run", "main.py"],
-        cwd=tui_dir,
+        ["uv", "run", "--directory", tui_dir, "ccflow-tui"],
         env={**os.environ, "CCFLOW_CWD": cwd, "CCFLOW_SERVER_URL": SERVER_URL},
     )
 

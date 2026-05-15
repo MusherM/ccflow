@@ -1,5 +1,5 @@
 """Entry point: launches the CCFlow TUI.
-Run:  cd design-prototypes/ccflow-tui && uv run textual run main.py
+Run:  cd tui && uv run ccflow-tui
 """
 
 from ccflow_tui.app import main

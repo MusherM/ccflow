@@ -6,9 +6,8 @@
 
 - `server/` — Node.js 守护进程（REST API、git 操作、SQLite、tmux）
 - `cmd/ccflow-cli/` — Python CLI（cc 通过 Bash tool 调用的桥接层）
-- `design-prototypes/ccflow-tui/` — Python/Textual 终端 UI（TUI 节点图管理器）
+- `tui/` — Python/Textual 终端 UI（TUI 节点图管理器）
 - `commands/` — cc 自定义 slash command Markdown 模板
-- `client/` — React Web 前端（浏览器端节点图画布）
 
 ## 关键规则
 
