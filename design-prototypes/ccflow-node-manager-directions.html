@@ -1,0 +1,1282 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CCFlow Node Manager UI Directions</title>
+  <style>
+    @font-face {
+      font-family: "Maple Mono NF CN";
+      src: url("../client/src/assets/fonts/MapleMono-NF-CN-Regular.ttf") format("truetype");
+      font-weight: 400;
+      font-style: normal;
+      font-display: swap;
+    }
+
+    @font-face {
+      font-family: "Maple Mono NF CN";
+      src: url("../client/src/assets/fonts/MapleMono-NF-CN-Bold.ttf") format("truetype");
+      font-weight: 700;
+      font-style: normal;
+      font-display: swap;
+    }
+
+    :root {
+      --font-mono: "Maple Mono NF CN", "JetBrains Mono", "SFMono-Regular", ui-monospace, monospace;
+      --font-sans: "Avenir Next", "DIN Alternate", "Helvetica Neue", Arial, sans-serif;
+      --bg: #f2efe7;
+      --panel: #fffaf0;
+      --panel-2: #ece4d6;
+      --ink: #171512;
+      --muted: #716957;
+      --line: #d4c8b2;
+      --line-strong: #1d1a16;
+      --accent: #d24b2a;
+      --accent-2: #217c68;
+      --accent-3: #b98b17;
+      --good: #2f8f59;
+      --warn: #b98516;
+      --danger: #bc3d2c;
+      --shadow: 0 18px 50px rgba(48, 36, 20, 0.12);
+      --node-radius: 7px;
+      --grain: rgba(23, 21, 18, 0.05);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-width: 1180px;
+      height: 100vh;
+      overflow: hidden;
+      color: var(--ink);
+      background:
+        linear-gradient(90deg, var(--grain) 1px, transparent 1px),
+        linear-gradient(var(--grain) 1px, transparent 1px),
+        var(--bg);
+      background-size: 24px 24px;
+      font-family: var(--font-sans);
+      letter-spacing: 0;
+    }
+
+    body[data-theme="ops"] {
+      --bg: #f2efe7;
+      --panel: #fffaf0;
+      --panel-2: #ece4d6;
+      --ink: #171512;
+      --muted: #716957;
+      --line: #d4c8b2;
+      --line-strong: #1d1a16;
+      --accent: #d24b2a;
+      --accent-2: #217c68;
+      --accent-3: #b98b17;
+      --good: #2f8f59;
+      --warn: #b98516;
+      --danger: #bc3d2c;
+      --shadow: 0 18px 50px rgba(48, 36, 20, 0.12);
+      --grain: rgba(23, 21, 18, 0.045);
+    }
+
+    body[data-theme="atlas"] {
+      --bg: #e7e5da;
+      --panel: #f8f6eb;
+      --panel-2: #d8d6c7;
+      --ink: #20231e;
+      --muted: #697061;
+      --line: #bfc2ad;
+      --line-strong: #30352d;
+      --accent: #2f6f5e;
+      --accent-2: #9a4337;
+      --accent-3: #976f19;
+      --good: #356f45;
+      --warn: #9f7625;
+      --danger: #a84a3b;
+      --shadow: 0 20px 70px rgba(35, 43, 28, 0.14);
+      --grain: rgba(32, 35, 30, 0.052);
+    }
+
+    body[data-theme="signal"] {
+      --bg: #090a08;
+      --panel: #11140f;
+      --panel-2: #1b2018;
+      --ink: #f4f1dc;
+      --muted: #9aa28f;
+      --line: #2f3a2c;
+      --line-strong: #dfe9c8;
+      --accent: #e66b3d;
+      --accent-2: #82d6a2;
+      --accent-3: #d0b15b;
+      --good: #82d6a2;
+      --warn: #d0b15b;
+      --danger: #e66b3d;
+      --shadow: 0 24px 80px rgba(0, 0, 0, 0.46);
+      --grain: rgba(244, 241, 220, 0.045);
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      color: var(--ink);
+      background: var(--panel);
+      cursor: pointer;
+      padding: 0 11px;
+      font-size: 12px;
+      letter-spacing: 0;
+    }
+
+    button:hover {
+      border-color: var(--line-strong);
+    }
+
+    button.primary {
+      background: var(--ink);
+      border-color: var(--ink);
+      color: var(--bg);
+      font-weight: 700;
+    }
+
+    body[data-theme="signal"] button.primary {
+      background: var(--accent-2);
+      color: #061008;
+      border-color: var(--accent-2);
+    }
+
+    .app {
+      height: 100vh;
+      display: grid;
+      grid-template-rows: 64px minmax(0, 1fr);
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 280px 1fr auto;
+      align-items: center;
+      gap: 22px;
+      padding: 0 22px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel) 86%, transparent);
+      backdrop-filter: blur(18px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .mark {
+      width: 36px;
+      height: 36px;
+      border: 1px solid var(--line-strong);
+      display: grid;
+      place-items: center;
+      font: 700 13px/1 var(--font-mono);
+      background: var(--panel-2);
+      box-shadow: 4px 4px 0 color-mix(in srgb, var(--line-strong) 16%, transparent);
+    }
+
+    .brand h1,
+    .brand p,
+    .brief p,
+    .brief strong {
+      margin: 0;
+    }
+
+    .brand h1 {
+      font: 700 19px/1 var(--font-mono);
+      letter-spacing: 0;
+    }
+
+    .brand p {
+      margin-top: 4px;
+      color: var(--muted);
+      font: 11px/1.1 var(--font-mono);
+    }
+
+    .brief {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      min-width: 0;
+    }
+
+    .brief strong {
+      white-space: nowrap;
+      color: var(--accent);
+      font: 700 12px/1 var(--font-mono);
+    }
+
+    .brief p {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .theme-tabs {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .theme-tabs button {
+      min-width: 106px;
+      color: var(--muted);
+      background: transparent;
+    }
+
+    .theme-tabs button[aria-pressed="true"] {
+      color: var(--ink);
+      border-color: var(--line-strong);
+      background: var(--panel-2);
+      font-weight: 700;
+    }
+
+    .workspace {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 276px minmax(0, 1fr) 344px;
+      gap: 14px;
+      padding: 14px;
+    }
+
+    .rail,
+    .stage,
+    .inspector {
+      min-width: 0;
+      border: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel) 94%, transparent);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .rail,
+    .inspector {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .panel-head {
+      min-height: 46px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-head h2 {
+      margin: 0;
+      font: 700 12px/1 var(--font-mono);
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .panel-head code {
+      color: var(--accent);
+      font: 12px/1 var(--font-mono);
+    }
+
+    .rail-body,
+    .inspector-body {
+      padding: 14px;
+      overflow: auto;
+    }
+
+    .rail-body {
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .section-title {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font: 700 11px/1 var(--font-mono);
+      text-transform: uppercase;
+    }
+
+    .project-card,
+    .assumption,
+    .lane-item,
+    .merge-basket,
+    .snapshot-row,
+    .detail-box {
+      border: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel) 82%, var(--panel-2));
+      border-radius: 7px;
+    }
+
+    .project-card {
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .project-card strong {
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .project-card span {
+      color: var(--muted);
+      font: 12px/1.4 var(--font-mono);
+      overflow-wrap: anywhere;
+    }
+
+    .health {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .health div {
+      min-height: 54px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .health b,
+    .health small {
+      display: block;
+    }
+
+    .health b {
+      font: 700 19px/1 var(--font-mono);
+      color: var(--accent);
+    }
+
+    .health small {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .assumption {
+      padding: 11px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.65;
+    }
+
+    .lane-item {
+      padding: 10px;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 9px;
+      align-items: center;
+      font-size: 12px;
+    }
+
+    .lane-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .lane-item:nth-of-type(2) .lane-dot {
+      background: var(--accent-2);
+    }
+
+    .lane-item:nth-of-type(3) .lane-dot {
+      background: var(--accent-3);
+    }
+
+    .lane-item b {
+      font: 700 12px/1.2 var(--font-mono);
+    }
+
+    .lane-item span {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .canvas-toolbar {
+      height: 46px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .tools-left,
+    .tools-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .tools-left button,
+    .tools-right button {
+      min-width: 34px;
+      padding: 0 9px;
+    }
+
+    .stage {
+      position: relative;
+      display: grid;
+      grid-template-rows: 46px minmax(0, 1fr);
+    }
+
+    .stage-scroll {
+      position: relative;
+      overflow: auto;
+      background:
+        radial-gradient(circle at 10px 10px, color-mix(in srgb, var(--line-strong) 15%, transparent) 1px, transparent 1px),
+        linear-gradient(90deg, color-mix(in srgb, var(--line) 55%, transparent) 1px, transparent 1px),
+        linear-gradient(color-mix(in srgb, var(--line) 55%, transparent) 1px, transparent 1px);
+      background-size: 28px 28px, 112px 112px, 112px 112px;
+    }
+
+    .flow-canvas {
+      position: relative;
+      width: 1320px;
+      height: 650px;
+      margin: 34px;
+    }
+
+    .lane-label {
+      position: absolute;
+      left: 0;
+      width: 1320px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font: 11px/1 var(--font-mono);
+      text-transform: uppercase;
+      pointer-events: none;
+    }
+
+    .lane-label::after {
+      content: "";
+      height: 1px;
+      flex: 1;
+      background: repeating-linear-gradient(90deg, var(--line), var(--line) 6px, transparent 6px, transparent 12px);
+      opacity: 0.7;
+    }
+
+    .lane-main { top: 248px; }
+    .lane-branch-a { top: 80px; }
+    .lane-branch-b { top: 430px; }
+
+    .edges {
+      position: absolute;
+      inset: 0;
+      width: 1320px;
+      height: 650px;
+      pointer-events: none;
+      overflow: visible;
+    }
+
+    .edge-path {
+      fill: none;
+      stroke: var(--line-strong);
+      stroke-width: 2;
+      stroke-linecap: square;
+      stroke-linejoin: round;
+      opacity: 0.76;
+    }
+
+    .edge-path.ghost {
+      stroke: var(--line);
+      stroke-dasharray: 5 7;
+      opacity: 0.9;
+    }
+
+    .edge-path.merge {
+      stroke: var(--accent);
+      stroke-width: 3;
+    }
+
+    .node {
+      position: absolute;
+      width: 198px;
+      min-height: 118px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--node-radius);
+      background:
+        linear-gradient(180deg, color-mix(in srgb, var(--panel) 95%, white), var(--panel));
+      color: var(--ink);
+      box-shadow: 9px 9px 0 color-mix(in srgb, var(--line-strong) 12%, transparent);
+      padding: 10px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 9px;
+      cursor: pointer;
+    }
+
+    body[data-theme="signal"] .node {
+      background:
+        linear-gradient(180deg, color-mix(in srgb, var(--panel) 90%, white 5%), var(--panel));
+      box-shadow: 0 0 0 1px rgba(130, 214, 162, 0.06), 0 20px 52px rgba(0, 0, 0, 0.32);
+    }
+
+    .node[aria-selected="true"] {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent), 11px 11px 0 color-mix(in srgb, var(--accent) 16%, transparent);
+    }
+
+    .node.active {
+      outline: 2px solid var(--accent-2);
+      outline-offset: 3px;
+    }
+
+    .node-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .node-kind {
+      min-width: 31px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      font: 700 11px/1 var(--font-mono);
+      color: var(--accent);
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--muted);
+      font: 11px/1 var(--font-mono);
+    }
+
+    .status::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--good);
+    }
+
+    .status.running::before {
+      background: var(--warn);
+    }
+
+    .status.conflict::before {
+      background: var(--danger);
+    }
+
+    .node h3 {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.24;
+      text-wrap: pretty;
+    }
+
+    .node p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .node-meta {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      color: var(--muted);
+      font: 11px/1.25 var(--font-mono);
+    }
+
+    .node-meta b {
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .branch-node {
+      border-color: var(--accent-2);
+    }
+
+    .merge-node {
+      border-color: var(--accent);
+      background:
+        linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent 45%),
+        var(--panel);
+    }
+
+    .rollback-node {
+      border-style: dashed;
+    }
+
+    .node[data-id="n0"] { left: 20px; top: 205px; }
+    .node[data-id="n1"] { left: 275px; top: 205px; }
+    .node[data-id="n2"] { left: 530px; top: 36px; }
+    .node[data-id="n3"] { left: 530px; top: 376px; }
+    .node[data-id="n4"] { left: 785px; top: 205px; }
+    .node[data-id="n5"] { left: 1040px; top: 205px; }
+    .node[data-id="n6"] { left: 1040px; top: 376px; }
+
+    .merge-bar {
+      min-height: 62px;
+      border-top: 1px solid var(--line);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      background: color-mix(in srgb, var(--panel) 90%, transparent);
+    }
+
+    .selected-strip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 9px;
+      background: var(--panel);
+      color: var(--muted);
+      font: 11px/1 var(--font-mono);
+      white-space: nowrap;
+    }
+
+    .chip b {
+      color: var(--ink);
+    }
+
+    .inspector-body {
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .detail-title {
+      display: grid;
+      gap: 6px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .detail-title span {
+      color: var(--accent);
+      font: 700 12px/1 var(--font-mono);
+      text-transform: uppercase;
+    }
+
+    .detail-title h2 {
+      margin: 0;
+      font-size: 23px;
+      line-height: 1.05;
+      text-wrap: pretty;
+    }
+
+    .detail-title p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .detail-box {
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .detail-box h3 {
+      margin: 0;
+      font: 700 12px/1 var(--font-mono);
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      gap: 8px;
+      color: var(--muted);
+      font: 12px/1.35 var(--font-mono);
+    }
+
+    .kv b {
+      color: var(--ink);
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .merge-basket {
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .basket-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font: 700 12px/1 var(--font-mono);
+    }
+
+    .basket-head span {
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    .merge-preview {
+      display: grid;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .merge-preview code {
+      color: var(--accent);
+      font-family: var(--font-mono);
+    }
+
+    .merge-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .snapshot-row {
+      padding: 10px;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 9px;
+      color: var(--muted);
+      font: 11px/1.25 var(--font-mono);
+    }
+
+    .snap-mark {
+      width: 24px;
+      height: 24px;
+      border: 1px solid var(--line);
+      display: grid;
+      place-items: center;
+      color: var(--accent-2);
+      background: var(--panel);
+      font-weight: 700;
+    }
+
+    .snapshot-row b {
+      color: var(--ink);
+      display: block;
+      margin-bottom: 2px;
+    }
+
+    .note {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    body[data-theme="atlas"] .node {
+      clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+      box-shadow: none;
+    }
+
+    body[data-theme="atlas"] .stage-scroll {
+      background:
+        linear-gradient(30deg, transparent 0 46%, color-mix(in srgb, var(--accent) 9%, transparent) 46.5% 47.5%, transparent 48%),
+        radial-gradient(circle at 10px 10px, color-mix(in srgb, var(--accent) 20%, transparent) 1px, transparent 1px),
+        var(--bg);
+      background-size: 140px 140px, 28px 28px, auto;
+    }
+
+    body[data-theme="signal"] .edge-path {
+      filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent-2) 35%, transparent));
+    }
+
+    body[data-theme="signal"] .node-kind,
+    body[data-theme="signal"] .snap-mark {
+      box-shadow: inset 0 0 16px rgba(130, 214, 162, 0.08);
+    }
+
+    @media (max-width: 1280px) {
+      .workspace {
+        grid-template-columns: 248px minmax(0, 1fr) 314px;
+      }
+
+      .theme-tabs button {
+        min-width: auto;
+      }
+    }
+  </style>
+</head>
+<body data-theme="ops">
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark">CF</div>
+        <div>
+          <h1>CCFlow</h1>
+          <p>worktree graph for AI turns</p>
+        </div>
+      </div>
+      <div class="brief">
+        <strong id="directionName">Direction 01 · Dispatch Console</strong>
+        <p id="directionSummary">高密度调度台：面向每天并行跑多个 Claude Code / opencode 任务的工程师。</p>
+      </div>
+      <nav class="theme-tabs" aria-label="Design directions">
+        <button type="button" data-theme-button="ops" aria-pressed="true">Dispatch</button>
+        <button type="button" data-theme-button="atlas" aria-pressed="false">Atlas</button>
+        <button type="button" data-theme-button="signal" aria-pressed="false">Signal</button>
+      </nav>
+    </header>
+
+    <main class="workspace">
+      <aside class="rail">
+        <div class="panel-head">
+          <h2>Product Frame</h2>
+          <code>prototype</code>
+        </div>
+        <div class="rail-body">
+          <section class="project-card">
+            <strong>节点式工作管理</strong>
+            <span>/Users/me/work/ccflow · main</span>
+            <div class="health">
+              <div><b>7</b><small>交互节点</small></div>
+              <div><b>3</b><small>并行 worktree</small></div>
+              <div><b>5</b><small>可回退快照</small></div>
+            </div>
+          </section>
+
+          <p class="section-title">初稿假设</p>
+          <section class="assumption">
+            一个节点就是一次与 AI 的交互；横向代表任务演进，纵向代表分支探索；多选节点后生成 merge 节点，冲突交给 Claude Code 或 opencode 在独立 worktree 里解决；每个节点保留 stash-like snapshot 用于回退。
+          </section>
+
+          <p class="section-title">并行 lane</p>
+          <div class="lane-item">
+            <i class="lane-dot"></i>
+            <div><b>Mainline</b><span>稳定推进，最终落 main</span></div>
+            <code>clean</code>
+          </div>
+          <div class="lane-item">
+            <i class="lane-dot"></i>
+            <div><b>Branch A</b><span>UI polish / copy pass</span></div>
+            <code>running</code>
+          </div>
+          <div class="lane-item">
+            <i class="lane-dot"></i>
+            <div><b>Branch B</b><span>server git integration</span></div>
+            <code>conflict</code>
+          </div>
+
+          <p class="section-title">核心操作</p>
+          <button class="primary" type="button" id="createNodeBtn">新建交互节点</button>
+          <button type="button" id="selectMergeBtn">选择推荐 merge 组</button>
+          <button type="button" id="rollbackBtn">查看节点回退点</button>
+        </div>
+      </aside>
+
+      <section class="stage">
+        <div class="canvas-toolbar">
+          <div class="tools-left">
+            <button type="button" title="Run">Run</button>
+            <button type="button" title="Branch">Branch</button>
+            <button type="button" title="Snapshot">Snapshot</button>
+            <button type="button" title="Rollback">Rollback</button>
+          </div>
+          <div class="tools-right">
+            <button type="button" id="clearSelectionBtn">清空选择</button>
+            <button class="primary" type="button" id="mergeBtn">Merge selected</button>
+          </div>
+        </div>
+        <div class="stage-scroll">
+          <div class="flow-canvas" aria-label="CCFlow horizontal node graph">
+            <div class="lane-label lane-branch-a">Branch A · product surface</div>
+            <div class="lane-label lane-main">Mainline · trunk</div>
+            <div class="lane-label lane-branch-b">Branch B · infrastructure</div>
+
+            <svg class="edges" viewBox="0 0 1320 650" aria-hidden="true">
+              <path class="edge-path" d="M218 264 H275" />
+              <path class="edge-path" d="M473 264 H500 V95 H530" />
+              <path class="edge-path" d="M473 264 H500 V435 H530" />
+              <path class="edge-path merge" d="M728 95 H760 V264 H785" />
+              <path class="edge-path merge" d="M728 435 H760 V264 H785" />
+              <path class="edge-path" d="M983 264 H1040" />
+              <path class="edge-path ghost" d="M884 323 V435 H1040" />
+            </svg>
+
+            <article class="node active" data-id="n0" data-kind="root" tabindex="0">
+              <div class="node-top"><span class="node-kind">T0</span><span class="status">done</span></div>
+              <div>
+                <h3>打开仓库并建立基线</h3>
+                <p>记录 main cwd、创建初始上下文包。</p>
+              </div>
+              <div class="node-meta"><span>native cwd</span><b>a13c09f</b></div>
+            </article>
+
+            <article class="node" data-id="n1" data-kind="turn" tabindex="0">
+              <div class="node-top"><span class="node-kind">T1</span><span class="status">done</span></div>
+              <div>
+                <h3>让 AI 规划节点化执行模型</h3>
+                <p>一次完整对话沉淀为可复跑节点。</p>
+              </div>
+              <div class="node-meta"><span>context 92%</span><b>ef802ba</b></div>
+            </article>
+
+            <article class="node branch-node" data-id="n2" data-kind="branch" tabindex="0">
+              <div class="node-top"><span class="node-kind">A1</span><span class="status running">running</span></div>
+              <div>
+                <h3>探索图谱 UI 与节点文案</h3>
+                <p>独立 worktree：ccflow-a-ui-copy。</p>
+              </div>
+              <div class="node-meta"><span>claude code</span><b>5f1d2e8</b></div>
+            </article>
+
+            <article class="node branch-node" data-id="n3" data-kind="branch" tabindex="0">
+              <div class="node-top"><span class="node-kind">B1</span><span class="status conflict">conflict</span></div>
+              <div>
+                <h3>实现 worktree 生命周期</h3>
+                <p>创建、挂载、清理、冲突隔离。</p>
+              </div>
+              <div class="node-meta"><span>opencode</span><b>90b6aa1</b></div>
+            </article>
+
+            <article class="node merge-node" data-id="n4" data-kind="merge" tabindex="0">
+              <div class="node-top"><span class="node-kind">M1</span><span class="status running">merge</span></div>
+              <div>
+                <h3>合并 UI 与后端方案</h3>
+                <p>把 A1 / B1 交给 AI 自行消解冲突。</p>
+              </div>
+              <div class="node-meta"><span>2 parents</span><b>pending</b></div>
+            </article>
+
+            <article class="node" data-id="n5" data-kind="turn" tabindex="0">
+              <div class="node-top"><span class="node-kind">T2</span><span class="status">ready</span></div>
+              <div>
+                <h3>验证合并后的可运行路径</h3>
+                <p>build、typecheck、手动节点流检查。</p>
+              </div>
+              <div class="node-meta"><span>main candidate</span><b>--</b></div>
+            </article>
+
+            <article class="node rollback-node" data-id="n6" data-kind="rollback" tabindex="0">
+              <div class="node-top"><span class="node-kind">R1</span><span class="status">stash</span></div>
+              <div>
+                <h3>回退到 B1 前的安全点</h3>
+                <p>节点级 snapshot，保留恢复说明。</p>
+              </div>
+              <div class="node-meta"><span>stash-like</span><b>snap-04</b></div>
+            </article>
+          </div>
+          <div class="merge-bar">
+            <div class="selected-strip" id="selectedStrip">
+              <span class="chip">点击节点加入选择</span>
+            </div>
+            <button class="primary" type="button" id="mergeBtnBottom">创建 merge 节点</button>
+          </div>
+        </div>
+      </section>
+
+      <aside class="inspector">
+        <div class="panel-head">
+          <h2>Node Inspector</h2>
+          <code id="activeCode">n0</code>
+        </div>
+        <div class="inspector-body">
+          <section class="detail-title">
+            <span id="activeKind">TURN NODE</span>
+            <h2 id="activeTitle">打开仓库并建立基线</h2>
+            <p id="activeDesc">记录 main cwd、创建初始上下文包。</p>
+          </section>
+
+          <section class="detail-box">
+            <h3>执行上下文</h3>
+            <div class="kv"><span>Worktree</span><b id="worktreePath">native repository cwd</b></div>
+            <div class="kv"><span>Agent</span><b id="agentName">claude code</b></div>
+            <div class="kv"><span>Snapshot</span><b id="snapshotName">snap-00 · clean</b></div>
+            <div class="kv"><span>Parents</span><b id="parentsList">none</b></div>
+          </section>
+
+          <section class="merge-basket">
+            <div class="basket-head">
+              <b>Merge Basket</b>
+              <span id="basketCount">0 selected</span>
+            </div>
+            <div class="merge-preview" id="mergePreview">
+              选择两个或更多节点后，这里会显示将要交给 AI 的 merge brief。
+            </div>
+            <div class="merge-actions">
+              <button type="button" id="mergeFromInspector">交给 CC</button>
+              <button type="button">交给 opencode</button>
+            </div>
+          </section>
+
+          <section class="detail-box">
+            <h3>回退点</h3>
+            <div class="snapshot-row">
+              <i class="snap-mark">1</i>
+              <span><b>pre-turn stash</b>节点执行前自动保存</span>
+              <code>safe</code>
+            </div>
+            <div class="snapshot-row">
+              <i class="snap-mark">2</i>
+              <span><b>post-turn diff</b>AI 输出后的完整 patch</span>
+              <code>diff</code>
+            </div>
+            <div class="snapshot-row">
+              <i class="snap-mark">3</i>
+              <span><b>merge checkpoint</b>合并冲突前的恢复点</span>
+              <code>guard</code>
+            </div>
+          </section>
+
+          <p class="note" id="styleNote">
+            Dispatch Console 适合第一个可用版本：信息密度高、工程师一眼能扫到 worktree、agent、snapshot 和 merge 状态。
+          </p>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <script>
+    const directions = {
+      ops: {
+        name: "Direction 01 · Dispatch Console",
+        summary: "高密度调度台：面向每天并行跑多个 Claude Code / opencode 任务的工程师。",
+        note: "Dispatch Console 适合第一个可用版本：信息密度高、工程师一眼能扫到 worktree、agent、snapshot 和 merge 状态。"
+      },
+      atlas: {
+        name: "Direction 02 · Worktree Atlas",
+        summary: "地图式工作流：把每个节点当作一块可定位、可追溯、可回退的工作地形。",
+        note: "Worktree Atlas 更像产品化的长期工作台：视觉温度更低，适合展示复杂分支、历史回放和团队交接。"
+      },
+      signal: {
+        name: "Direction 03 · Signal Studio",
+        summary: "沉浸式节点地图：突出并行 AI 交互像信号流一样被编排和合并。",
+        note: "Signal Studio 最有记忆点，适合官网演示或高级模式；如果做成主界面，需要继续压低装饰强度。"
+      }
+    };
+
+    const details = {
+      n0: {
+        kind: "TURN NODE",
+        title: "打开仓库并建立基线",
+        desc: "记录 main cwd、创建初始上下文包。",
+        worktree: "native repository cwd",
+        agent: "claude code",
+        snapshot: "snap-00 · clean",
+        parents: "none"
+      },
+      n1: {
+        kind: "TURN NODE",
+        title: "让 AI 规划节点化执行模型",
+        desc: "一次完整对话沉淀为可复跑节点。",
+        worktree: "native repository cwd",
+        agent: "claude code",
+        snapshot: "snap-01 · post-turn diff",
+        parents: "n0"
+      },
+      n2: {
+        kind: "BRANCH NODE",
+        title: "探索图谱 UI 与节点文案",
+        desc: "独立 worktree：ccflow-a-ui-copy。",
+        worktree: "~/.ccflow/worktrees/ccflow-a-ui-copy",
+        agent: "claude code",
+        snapshot: "snap-02 · pre-run stash",
+        parents: "n1"
+      },
+      n3: {
+        kind: "BRANCH NODE",
+        title: "实现 worktree 生命周期",
+        desc: "创建、挂载、清理、冲突隔离。",
+        worktree: "~/.ccflow/worktrees/ccflow-b-git-life",
+        agent: "opencode",
+        snapshot: "snap-03 · conflict guard",
+        parents: "n1"
+      },
+      n4: {
+        kind: "MERGE NODE",
+        title: "合并 UI 与后端方案",
+        desc: "把 A1 / B1 交给 AI 自行消解冲突。",
+        worktree: "~/.ccflow/worktrees/merge-a1-b1",
+        agent: "claude code",
+        snapshot: "snap-04 · merge checkpoint",
+        parents: "n2, n3"
+      },
+      n5: {
+        kind: "TURN NODE",
+        title: "验证合并后的可运行路径",
+        desc: "build、typecheck、手动节点流检查。",
+        worktree: "native repository cwd",
+        agent: "claude code",
+        snapshot: "snap-05 · release candidate",
+        parents: "n4"
+      },
+      n6: {
+        kind: "ROLLBACK NODE",
+        title: "回退到 B1 前的安全点",
+        desc: "节点级 snapshot，保留恢复说明。",
+        worktree: "~/.ccflow/worktrees/ccflow-b-git-life",
+        agent: "system",
+        snapshot: "snap-04 · restored",
+        parents: "n4"
+      }
+    };
+
+    const selected = new Set();
+    let activeId = "n0";
+
+    const nodes = Array.from(document.querySelectorAll(".node"));
+    const selectedStrip = document.getElementById("selectedStrip");
+    const basketCount = document.getElementById("basketCount");
+    const mergePreview = document.getElementById("mergePreview");
+
+    function setTheme(theme) {
+      document.body.dataset.theme = theme;
+      document.getElementById("directionName").textContent = directions[theme].name;
+      document.getElementById("directionSummary").textContent = directions[theme].summary;
+      document.getElementById("styleNote").textContent = directions[theme].note;
+      document.querySelectorAll("[data-theme-button]").forEach((button) => {
+        button.setAttribute("aria-pressed", button.dataset.themeButton === theme ? "true" : "false");
+      });
+    }
+
+    function setActive(id) {
+      activeId = id;
+      const data = details[id];
+      document.querySelectorAll(".node").forEach((node) => node.classList.toggle("active", node.dataset.id === id));
+      document.getElementById("activeCode").textContent = id;
+      document.getElementById("activeKind").textContent = data.kind;
+      document.getElementById("activeTitle").textContent = data.title;
+      document.getElementById("activeDesc").textContent = data.desc;
+      document.getElementById("worktreePath").textContent = data.worktree;
+      document.getElementById("agentName").textContent = data.agent;
+      document.getElementById("snapshotName").textContent = data.snapshot;
+      document.getElementById("parentsList").textContent = data.parents;
+    }
+
+    function renderSelection() {
+      nodes.forEach((node) => {
+        node.setAttribute("aria-selected", selected.has(node.dataset.id) ? "true" : "false");
+      });
+
+      const selectedIds = Array.from(selected);
+      basketCount.textContent = `${selectedIds.length} selected`;
+
+      if (selectedIds.length === 0) {
+        selectedStrip.innerHTML = '<span class="chip">点击节点加入选择</span>';
+        mergePreview.textContent = "选择两个或更多节点后，这里会显示将要交给 AI 的 merge brief。";
+        return;
+      }
+
+      selectedStrip.innerHTML = selectedIds.map((id) => {
+        const data = details[id];
+        return `<span class="chip"><b>${id}</b>${data.title}</span>`;
+      }).join("");
+
+      if (selectedIds.length < 2) {
+        mergePreview.innerHTML = "再选一个节点即可创建 merge brief。";
+      } else {
+        const names = selectedIds.map((id) => `${id}「${details[id].title}」`).join(" + ");
+        mergePreview.innerHTML = `将创建 <code>merge/${selectedIds.join("-")}</code> worktree，并把 ${names} 的 diff、snapshot 与父节点上下文打包给 AI 处理。`;
+      }
+    }
+
+    function toggleSelect(id) {
+      if (selected.has(id)) {
+        selected.delete(id);
+      } else {
+        selected.add(id);
+      }
+      renderSelection();
+    }
+
+    nodes.forEach((node) => {
+      node.addEventListener("click", () => {
+        setActive(node.dataset.id);
+        toggleSelect(node.dataset.id);
+      });
+      node.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          setActive(node.dataset.id);
+          toggleSelect(node.dataset.id);
+        }
+      });
+    });
+
+    document.querySelectorAll("[data-theme-button]").forEach((button) => {
+      button.addEventListener("click", () => setTheme(button.dataset.themeButton));
+    });
+
+    document.getElementById("clearSelectionBtn").addEventListener("click", () => {
+      selected.clear();
+      renderSelection();
+    });
+
+    document.getElementById("selectMergeBtn").addEventListener("click", () => {
+      selected.clear();
+      selected.add("n2");
+      selected.add("n3");
+      setActive("n4");
+      renderSelection();
+    });
+
+    document.getElementById("rollbackBtn").addEventListener("click", () => {
+      selected.clear();
+      selected.add("n6");
+      setActive("n6");
+      renderSelection();
+    });
+
+    document.getElementById("createNodeBtn").addEventListener("click", () => {
+      setActive("n5");
+      selected.clear();
+      selected.add("n5");
+      renderSelection();
+    });
+
+    ["mergeBtn", "mergeBtnBottom", "mergeFromInspector"].forEach((id) => {
+      document.getElementById(id).addEventListener("click", () => {
+        if (selected.size < 2) {
+          selected.clear();
+          selected.add("n2");
+          selected.add("n3");
+        }
+        setActive("n4");
+        renderSelection();
+      });
+    });
+
+    const initialTheme = new URLSearchParams(window.location.search).get("theme");
+    if (initialTheme && directions[initialTheme]) {
+      setTheme(initialTheme);
+    }
+
+    setActive(activeId);
+    renderSelection();
+  </script>
+</body>
+</html>
