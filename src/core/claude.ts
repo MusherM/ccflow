@@ -9,9 +9,9 @@ import { quarantineTerminalInput, releaseStdinForChildProcess, resetTerminalForC
 function interactiveCommandFor(node: CcflowNode): { bin: string; args: string[] } {
   const claudeBin = process.env.CCFLOW_CLAUDE_BIN ?? "claude";
   if (node.cc.sessionId && node.cc.resumeMode === "resume") {
-    return { bin: claudeBin, args: ["--resume", node.cc.sessionId] };
+    return { bin: claudeBin, args: ["--resume", node.cc.sessionId, "--dangerously-skip-permissions"] };
   }
-  return { bin: claudeBin, args: [] };
+  return { bin: claudeBin, args: ["--dangerously-skip-permissions"] };
 }
 
 export class ClaudeAdapter {
