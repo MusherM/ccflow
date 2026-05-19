@@ -101,7 +101,13 @@ test("TUI enter leaf forwards return and delete keys to the attached session", a
   const result = runTuiPty(
     repoRoot,
     [
-      { sequence: "\r", delay: 10, waitForOutputText: "CCFLOW_INPUT_PROBE_READY" },
+      {
+        sequence: "\r",
+        delay: 10,
+        waitForOutputText: "CCFLOW_INPUT_PROBE_READY",
+        injectAfterMs: 50,
+        injectSequence: "\x1b_Gi=31337;OK\x1b\\",
+      },
       {
         sequence: "abc\x7f\x1b[3~\r",
         delay: 15,
@@ -127,11 +133,53 @@ test("TUI enter leaf forwards return and delete keys to the attached session", a
     .filter((event) => event.event === "data")
     .map((event) => event.hex ?? "")
     .join("");
+  const decoded = Buffer.from(hex, "hex").toString("utf8");
 
   assert.match(hex, /0d|0a/);
   assert.match(hex, /7f|08/);
   assert.match(hex, /1b5b337e/);
+  assert.doesNotMatch(decoded, /Gi=31337;OK|opentui-notifications|Capabilities=/);
   assert.equal(events.at(-1)?.event, "done");
+});
+
+test("TUI enter leaf intercepts only escape when attached to a session", async () => {
+  requirePython3();
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-tui-escape-"));
+  const git = new GitAdapter();
+  git.ensureRepo(repoRoot);
+  fs.writeFileSync(path.join(repoRoot, "README.md"), "initial\n");
+  git.commit(repoRoot, "test: initial readme");
+  loadOrInitState({
+    repoRoot,
+    branch: git.currentBranch(repoRoot),
+    commitHash: git.currentCommit(repoRoot),
+  });
+  const probe = createEscapeProbe(repoRoot);
+
+  const result = runTuiPty(
+    repoRoot,
+    [
+      { sequence: "\r", delay: 10, waitForOutputText: "CCFLOW_ESCAPE_PROBE_READY" },
+      { sequence: "\x1b", delay: 6, waitForFileText: { path: probe.logPath, text: "\"event\":\"no-escape\"" } },
+      { sequence: "q", delay: 0.5 },
+    ],
+    {
+      ...process.env,
+      CCFLOW_CLAUDE_BIN: probe.binPath,
+    },
+    30000,
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const events = fs
+    .readFileSync(probe.logPath, "utf8")
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { event: string; hex?: string });
+
+  assert.equal(events.some((event) => event.event === "received-escape"), false);
+  assert.equal(events.at(-1)?.event, "no-escape");
 });
 
 function runTuiPty(
@@ -144,6 +192,8 @@ function runTuiPty(
     waitForOutputText?: string;
     waitForFileText?: { path: string; text: string };
     repeatUntilFileText?: boolean;
+    injectAfterMs?: number;
+    injectSequence?: string;
   }>,
   extraEnv: NodeJS.ProcessEnv = process.env,
   timeout = 15000,
@@ -285,6 +335,9 @@ drain(0.8)
 for item in keys:
     if item["sequence"] and not item.get("repeatUntilFileText"):
         os.write(master, item["sequence"].encode("utf-8"))
+    if "injectSequence" in item:
+        time.sleep(float(item.get("injectAfterMs", 0)) / 1000)
+        os.write(master, item["injectSequence"].encode("utf-8"))
     if "waitForNodeCount" in item:
         if not wait_for_state(item["waitForNodeCount"], float(item["delay"])):
             completed_keys = False
@@ -338,6 +391,15 @@ function createInputProbe(repoRoot: string): { binPath: string; logPath: string 
   return { binPath, logPath };
 }
 
+function createEscapeProbe(repoRoot: string): { binPath: string; logPath: string } {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-escape-probe-"));
+  const binPath = path.join(dir, "escape-probe.cjs");
+  const logPath = path.join(repoRoot, ".ccflow", "escape-probe.jsonl");
+  fs.writeFileSync(binPath, escapeProbeSource());
+  fs.chmodSync(binPath, 0o755);
+  return { binPath, logPath };
+}
+
 function inputProbeSource(): string {
   return String.raw`#!/usr/bin/env node
 const fs = require("node:fs");
@@ -381,5 +443,37 @@ setTimeout(() => {
   record("timeout", { hex: allHex() });
   process.exit(3);
 }, 15000);
+`;
+}
+
+function escapeProbeSource(): string {
+  return String.raw`#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+
+const logPath = process.env.CCFLOW_ESCAPE_PROBE_LOG || process.argv[2] || path.join(process.cwd(), ".ccflow", "escape-probe.jsonl");
+
+function record(event, payload = {}) {
+  fs.mkdirSync(path.dirname(logPath), { recursive: true });
+  fs.appendFileSync(logPath, JSON.stringify({ event, ...payload }) + "\n");
+}
+
+if (process.stdin.setRawMode) process.stdin.setRawMode(true);
+process.stdin.resume();
+process.stdin.on("data", (chunk) => {
+  const hex = chunk.toString("hex");
+  record("data", { hex });
+  if (hex === "1b") {
+    record("received-escape", { hex });
+    process.exit(2);
+  }
+});
+record("start");
+process.stdout.write("CCFLOW_ESCAPE_PROBE_READY\n");
+
+setTimeout(() => {
+  record("no-escape");
+  process.exit(0);
+}, 2000);
 `;
 }

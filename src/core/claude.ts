@@ -4,7 +4,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import type { CcflowNode } from "./types.js";
 import { runCommand, tryCommand } from "./shell.js";
-import { releaseStdinForChildProcess, resetTerminalForChildProcess } from "./terminal.js";
+import { quarantineTerminalInput, releaseStdinForChildProcess, resetTerminalForChildProcess } from "./terminal.js";
 
 function safeSessionName(nodeId: string): string {
   return `ccflow_${nodeId.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 80)}`;
@@ -23,7 +23,10 @@ function commandFor(node: CcflowNode): string {
 }
 
 export class ClaudeAdapter {
-  attachOrResume(node: CcflowNode, cwd: string): { sessionId: string | null; tmuxSession: string | null; alive: boolean } {
+  async attachOrResume(
+    node: CcflowNode,
+    cwd: string,
+  ): Promise<{ sessionId: string | null; tmuxSession: string | null; alive: boolean }> {
     const tmuxSession = node.cc.tmuxSession || safeSessionName(node.id);
     if (!this.hasTmuxSession(tmuxSession)) {
       this.prepareTmuxDefaults();
@@ -32,7 +35,7 @@ export class ClaudeAdapter {
       node.cc.resumeMode = node.cc.sessionId ? "resume" : "new";
     }
 
-    this.attachTmux(tmuxSession);
+    await this.attachTmux(tmuxSession);
     const alive = this.hasTmuxSession(tmuxSession);
     const sessionId = this.findRecentClaudeSessionId(cwd) ?? node.cc.sessionId;
     return { sessionId, tmuxSession: alive ? tmuxSession : null, alive };
@@ -65,12 +68,15 @@ export class ClaudeAdapter {
     return tryCommand("tmux", ["has-session", "-t", session]).ok;
   }
 
-  private attachTmux(session: string): void {
+  private async attachTmux(session: string): Promise<void> {
     const previousEscape = this.captureTmuxBinding();
     const previousEscapeTime = this.captureEscapeTime();
     this.prepareTmuxSession(session);
     tryCommand("tmux", ["bind-key", "-T", "root", "Escape", "detach-client"]);
     tryCommand("tmux", ["set-option", "-s", "escape-time", process.env.CCFLOW_TMUX_ESCAPE_TIME ?? "500"]);
+    releaseStdinForChildProcess();
+    resetTerminalForChildProcess();
+    await quarantineTerminalInput();
     releaseStdinForChildProcess();
     resetTerminalForChildProcess();
     try {

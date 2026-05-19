@@ -11,7 +11,7 @@ import { GitAdapter } from "./core/git.js";
 import { getNode, getWorktree, isLeafNode, switchCurrentWorktree } from "./core/graph.js";
 import { JobRunner } from "./core/jobs.js";
 import { saveSession, saveState } from "./core/storage.js";
-import { releaseStdinForChildProcess, resetTerminalForChildProcess } from "./core/terminal.js";
+import { quarantineTerminalInput, releaseStdinForChildProcess, resetTerminalForChildProcess } from "./core/terminal.js";
 import type { CcflowNode, CcflowState } from "./core/types.js";
 
 type Direction = "left" | "right" | "up" | "down";
@@ -69,29 +69,41 @@ async function runGraphOnce(
   ui: UiState,
   jobs: JobRunner,
 ): Promise<TuiExit> {
-  const renderer = await createCliRenderer({
-    exitOnCtrlC: true,
-    clearOnShutdown: true,
-    screenMode: "alternate-screen",
-    targetFps: 30,
-    consoleMode: "disabled",
-    // OpenTUI currently treats null/undefined as default Kitty flags; false keeps normal bytes for tmux/Claude.
-    useKittyKeyboard: false as never,
-    useMouse: false,
-    enableMouseMovement: false,
-    backgroundColor: "#070b10",
-  });
+  const previousOpenTuiGraphics = process.env.OPENTUI_GRAPHICS;
+  process.env.OPENTUI_GRAPHICS = "false";
+  let renderer: CliRenderer;
+  try {
+    renderer = await createCliRenderer({
+      exitOnCtrlC: true,
+      clearOnShutdown: true,
+      screenMode: "alternate-screen",
+      targetFps: 30,
+      consoleMode: "disabled",
+      // OpenTUI currently treats null/undefined as default Kitty flags; false keeps normal bytes for tmux/Claude.
+      useKittyKeyboard: false as never,
+      useMouse: false,
+      enableMouseMovement: false,
+      backgroundColor: "#070b10",
+    });
+  } finally {
+    restoreEnvValue("OPENTUI_GRAPHICS", previousOpenTuiGraphics);
+  }
+  renderer.disableKittyKeyboard();
 
   let settled = false;
   const settle = (result: TuiExit) => {
     if (settled) return;
     settled = true;
-    renderer.disableKittyKeyboard();
-    renderer.suspend();
-    renderer.destroy();
-    releaseStdinForChildProcess();
-    resetTerminalForChildProcess();
-    resolve(result);
+    void (async () => {
+      renderer.disableKittyKeyboard();
+      renderer.suspend();
+      renderer.destroy();
+      resetTerminalForChildProcess();
+      await quarantineTerminalInput();
+      releaseStdinForChildProcess();
+      resetTerminalForChildProcess();
+      resolve(result);
+    })();
   };
 
   let resolve!: (value: TuiExit) => void;
@@ -248,7 +260,7 @@ async function enterLeaf(
   saveState(state);
 
   try {
-    const result = claude.attachOrResume(node, worktree.path);
+    const result = await claude.attachOrResume(node, worktree.path);
     node.cc.sessionId = result.sessionId;
     node.cc.tmuxSession = result.tmuxSession;
     node.cc.processId = null;
@@ -322,6 +334,11 @@ function renderApp(renderer: CliRenderer, state: CcflowState, ui: UiState): void
   );
 
   renderer.requestRender();
+}
+
+function restoreEnvValue(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
 }
 
 function toolbar(state: CcflowState, ui: UiState) {

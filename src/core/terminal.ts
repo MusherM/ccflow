@@ -28,3 +28,25 @@ export function releaseStdinForChildProcess(input: ReadStream = process.stdin): 
   if (input.setRawMode) input.setRawMode(false);
   input.pause();
 }
+
+export async function quarantineTerminalInput(
+  options: { input?: ReadStream; durationMs?: number } = {},
+): Promise<void> {
+  const input = options.input ?? process.stdin;
+  if (!input.isTTY) return;
+
+  const durationMs = options.durationMs ?? Number(process.env.CCFLOW_TERMINAL_QUARANTINE_MS ?? "250");
+  const previousRawMode = input.isRaw ?? false;
+  const discard = () => {};
+
+  input.on("data", discard);
+  if (input.setRawMode) input.setRawMode(true);
+  input.resume();
+
+  await new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, durationMs)));
+
+  input.off("data", discard);
+  while (input.read() !== null) {}
+  if (input.setRawMode) input.setRawMode(previousRawMode);
+  if (!previousRawMode) input.pause();
+}
