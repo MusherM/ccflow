@@ -10,7 +10,7 @@ const gitIdentity = {
   GIT_COMMITTER_EMAIL: "ccflow@local",
 };
 
-const userPathspec = [".", ":(exclude).ccflow", ":(exclude).worktrees"];
+const userPathspec = [".", ":(exclude).ccflow", ":(exclude).worktrees", ":(exclude).DS_Store", ":(exclude).claude"];
 
 export class GitAdapter {
   ensureRepo(cwd: string): string {
@@ -109,6 +109,12 @@ export class GitAdapter {
   conflictFiles(cwd: string): string[] {
     const result = tryCommand("git", ["diff", "--name-only", "--diff-filter=U"], { cwd });
     return result.ok ? result.stdout.split(/\r?\n/).filter(Boolean) : [];
+  }
+
+  merge(sourceCommit: string, cwd: string): { ok: boolean; conflicts: string[] } {
+    const result = tryCommand("git", ["merge", sourceCommit, "--no-edit", "--no-ff"], { cwd });
+    if (result.ok) return { ok: true, conflicts: [] };
+    return { ok: false, conflicts: this.conflictFiles(cwd) };
   }
 
   lastCommitMessage(cwd: string): string {

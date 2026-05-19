@@ -5,9 +5,16 @@ import os from "node:os";
 import path from "node:path";
 import { ClaudeAdapter } from "../src/core/claude.js";
 import { GitAdapter, branchNameForNode, worktreeIdFromBranch, worktreePathForBranch } from "../src/core/git.js";
-import { branchFromNode, assertGraphInvariants } from "../src/core/graph.js";
+import {
+  assertGraphInvariants,
+  branchFromNode,
+  createInitialState,
+  getNode,
+  normalizeAfterBoot,
+} from "../src/core/graph.js";
 import { JobRunner } from "../src/core/jobs.js";
 import { loadOrInitState, saveState } from "../src/core/storage.js";
+import { resetTerminalForChildProcess } from "../src/core/terminal.js";
 import type { CcflowState } from "../src/core/types.js";
 import { claudeCliConfig, withClaudeCliEnv } from "./helpers/claude-cli.js";
 
@@ -122,6 +129,114 @@ test("deleting through a commitless parent resets to the nearest committed ances
   assert.equal(state.nodes[emptyParent.id]?.type, "leaf");
   assert.equal(state.nodes[emptyParent.id]?.git.commitHash, null);
   assert.equal(fs.readFileSync(path.join(worktreePath, "README.md"), "utf8"), "initial\n");
+  assertGraphInvariants(state);
+});
+
+test("git dirty checks ignore system files like .DS_Store and .claude", () => {
+  const { repoRoot } = createRepoState();
+  fs.mkdirSync(path.join(repoRoot, ".claude"), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, ".claude", "settings.json"), "{}");
+  fs.writeFileSync(path.join(repoRoot, ".DS_Store"), "");
+  fs.mkdirSync(path.join(repoRoot, ".ccflow", "logs"), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, ".ccflow", "logs", "test.log"), "log entry\n");
+  fs.mkdirSync(path.join(repoRoot, ".worktrees", "dummy"), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, ".worktrees", "dummy", "file.txt"), "worktree\n");
+
+  const git = new GitAdapter();
+
+  assert.equal(git.hasDirtyChanges(repoRoot), false);
+  assert.equal(git.statusShort(repoRoot), "");
+});
+
+test("terminal reset uses hard keyboard reset not pop", () => {
+  let captured = "";
+  const fakeStdout = {
+    isTTY: true,
+    write: (data: string) => { captured += data; return true; },
+  } as unknown as NodeJS.WriteStream;
+  resetTerminalForChildProcess(fakeStdout);
+  assert.ok(captured.includes("\x1b[=u"), "should use hard reset not pop");
+  assert.ok(!captured.includes("\x1b[<u"), "should not use pop");
+});
+
+test("delete two children then tab from root creates next node cleanly", async () => {
+  const { state, repoRoot } = createRepoState();
+  const git = new GitAdapter();
+  const runner = new JobRunner(git);
+  const rootId = state.currentNodeId;
+
+  // Create two chained children via createNextNode (worktree is clean, skips Claude)
+  const nodeA = await runner.createNextNode(state, rootId);
+  const nodeB = await runner.createNextNode(state, nodeA.id);
+
+  // Delete B then A — worktree is shared (same wt_main), reset to real parent commits
+  await runner.deleteLeaf(state, nodeB.id);
+  await runner.deleteLeaf(state, nodeA.id);
+
+  // Root should be a leaf again
+  assert.equal(getNode(state, rootId).type, "leaf");
+  assert.equal(getNode(state, rootId).children.length, 0);
+  assert.equal(state.currentNodeId, rootId);
+
+  // Worktree should be clean after two resets
+  assert.equal(git.hasDirtyChanges(repoRoot), false);
+
+  // TAB from root — should succeed without hanging
+  const child = await runner.createNextNode(state, rootId);
+  assert.ok(child, "should create a child after delete chain");
+  assert.equal(getNode(state, child.id).type, "leaf");
+  assert.equal(state.currentNodeId, child.id);
+  assertGraphInvariants(state);
+});
+
+test("CommitFailed node recovers when worktree cleaned and commitLeaf re-runs", async () => {
+  const { state, repoRoot } = createRepoState();
+  const git = new GitAdapter();
+  const runner = new JobRunner(git);
+  const rootId = state.currentNodeId;
+
+  // Get the real commit hash from the repo
+  const rootCommit = git.currentCommit(repoRoot);
+  assert.ok(rootCommit, "repo should have a real commit");
+
+  // Create a child node and simulate a failed commit
+  const nodeA = await runner.createNextNode(state, rootId);
+  const failedNode = getNode(state, nodeA.id);
+  failedNode.status = "CommitFailed";
+  failedNode.locked = false;
+  failedNode.error = "Simulated commit failure";
+
+  // Reset worktree to root's clean state
+  git.resetHard(repoRoot, rootCommit);
+  assert.equal(git.hasDirtyChanges(repoRoot), false);
+
+  // TAB from the CommitFailed leaf — commitLeaf should see clean worktree and succeed
+  const recovered = await runner.createNextNode(state, nodeA.id);
+  assert.ok(recovered, "should recover from CommitFailed with clean worktree");
+  assert.notEqual(getNode(state, nodeA.id).status, "CommitFailed");
+  assertGraphInvariants(state);
+});
+
+test("normalizeAfterBoot converts stale transient session state on locked nodes", () => {
+  const state = createInitialState({
+    repoRoot: "/repo",
+    branch: "main",
+    commitHash: "abc123",
+    now: "2026-05-18T10:00:00.000Z",
+    idFactory: (prefix: string) => `${prefix}_001`,
+  });
+
+  const node = state.nodes[state.currentNodeId]!;
+  node.status = "Committing";
+  node.locked = true;
+  node.cc.processId = 99999;
+
+  normalizeAfterBoot(state);
+
+  assert.equal(node.locked, false);
+  assert.equal(node.cc.processId, null);
+  assert.equal(node.status, "JobFailed");
+  assert.ok(node.error?.includes("interrupted"));
   assertGraphInvariants(state);
 });
 

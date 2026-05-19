@@ -169,14 +169,12 @@ test("boot normalization converts suspended leaf sessions to resumable state", (
   node.status = "LeafSuspended";
   node.cc.sessionId = "claude-session-1";
   node.cc.processId = 123;
-  node.cc.tmuxSession = "ccflow_node_001";
   node.cc.resumeMode = "attached";
 
   normalizeAfterBoot(state);
 
   assert.equal(node.status, "LeafResumable");
   assert.equal(node.cc.processId, null);
-  assert.equal(node.cc.tmuxSession, null);
   assert.equal(node.cc.resumeMode, "resume");
   assertGraphInvariants(state);
 });
@@ -241,7 +239,6 @@ test("deleting through empty ancestors is valid and resolves reset commit recurs
       sessionId: null,
       processId: null,
       resumeMode: "new",
-      tmuxSession: null,
     },
     stats: { filesChanged: 0, insertions: 0, deletions: 0, symbolsChanged: [] },
     status: "sealed",
@@ -263,7 +260,6 @@ test("deleting through empty ancestors is valid and resolves reset commit recurs
       sessionId: null,
       processId: null,
       resumeMode: "new",
-      tmuxSession: null,
     },
     stats: { filesChanged: 0, insertions: 0, deletions: 0, symbolsChanged: [] },
     status: "LeafNew",

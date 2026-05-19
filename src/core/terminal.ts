@@ -16,7 +16,7 @@ const terminalResetForChildProcess = [
   "\x1b[?2027l",
   "\x1b[?2031l",
   "\x1b[>4;0m",
-  "\x1b[<u",
+  "\x1b[=u",
 ].join("");
 
 export function resetTerminalForChildProcess(output: WriteStream = process.stdout): void {
@@ -25,6 +25,7 @@ export function resetTerminalForChildProcess(output: WriteStream = process.stdou
 }
 
 export function releaseStdinForChildProcess(input: ReadStream = process.stdin): void {
+  input.removeAllListeners("data");
   if (input.setRawMode) input.setRawMode(false);
   input.pause();
 }
@@ -35,7 +36,7 @@ export async function quarantineTerminalInput(
   const input = options.input ?? process.stdin;
   if (!input.isTTY) return;
 
-  const durationMs = options.durationMs ?? Number(process.env.CCFLOW_TERMINAL_QUARANTINE_MS ?? "250");
+  const durationMs = options.durationMs ?? Number(process.env.CCFLOW_TERMINAL_QUARANTINE_MS ?? "500");
   const previousRawMode = input.isRaw ?? false;
   const discard = () => {};
 

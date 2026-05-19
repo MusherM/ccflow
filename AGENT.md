@@ -25,7 +25,7 @@ src/
     graph.ts       # 节点 DAG + 不变量断言（系统边界，修改前先补测试）
     storage.ts     # .ccflow JSON 读写
     git.ts         # Git/worktree 操作
-    claude.ts      # Claude/tmux 会话管理
+    claude.ts      # Claude Code 会话管理
     jobs.ts        # commit/merge job runner（独立 Claude Code 进程）
     types.ts       # 数据模型
 ```

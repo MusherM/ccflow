@@ -36,7 +36,6 @@ export interface NodeClaudeInfo {
   sessionId: string | null;
   processId: number | null;
   resumeMode: ResumeMode;
-  tmuxSession?: string | null;
 }
 
 export interface CcflowNode {

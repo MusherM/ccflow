@@ -79,7 +79,7 @@ async function runGraphOnce(
       screenMode: "alternate-screen",
       targetFps: 30,
       consoleMode: "disabled",
-      // OpenTUI currently treats null/undefined as default Kitty flags; false keeps normal bytes for tmux/Claude.
+      // OpenTUI currently treats null/undefined as default Kitty flags; false keeps normal bytes for Claude.
       useKittyKeyboard: false as never,
       useMouse: false,
       enableMouseMovement: false,
@@ -97,7 +97,9 @@ async function runGraphOnce(
     void (async () => {
       renderer.disableKittyKeyboard();
       renderer.suspend();
+      const destroyed = new Promise<void>((resolve) => renderer.once("destroy", () => resolve()));
       renderer.destroy();
+      await destroyed;
       resetTerminalForChildProcess();
       await quarantineTerminalInput();
       releaseStdinForChildProcess();
@@ -220,12 +222,33 @@ async function runGraphOnce(
     }
 
     if (key.sequence === "m") {
-      void runAction("merging...", async () => {
-        const merge = await jobs.mergeLeaves(state, [...ui.selectedIds]);
-        ui.focusId = merge.id;
-        ui.selectedIds.clear();
-        ui.message = `Merge node ${merge.id}`;
-      });
+      if (ui.busy) return;
+      ui.busy = true;
+      ui.task = "merging...";
+      ui.message = "merging...";
+      rerender();
+      (async () => {
+        try {
+          await new Promise<void>((r) => setTimeout(r, 0));
+          const merge = await jobs.mergeLeaves(state, [...ui.selectedIds]);
+          saveState(state);
+          ui.focusId = merge.id;
+          ui.selectedIds.clear();
+          if (merge.status === "MergeConflict") {
+            settle({ kind: "enter", nodeId: merge.id });
+            return;
+          }
+          ui.message = `Merge node ${merge.id}`;
+        } catch (error) {
+          ui.message = error instanceof Error ? error.message : String(error);
+        } finally {
+          if (!settled) {
+            ui.busy = false;
+            ui.task = null;
+            rerender();
+          }
+        }
+      })();
     }
   });
 
@@ -255,22 +278,21 @@ async function enterLeaf(
   }
 
   node.status = "LeafRunning";
-  node.cc.resumeMode = node.cc.tmuxSession ? "attached" : node.cc.sessionId ? "resume" : "new";
+  node.cc.resumeMode = node.cc.sessionId ? "resume" : "new";
   node.updatedAt = new Date().toISOString();
   saveState(state);
 
   try {
     const result = await claude.attachOrResume(node, worktree.path);
     node.cc.sessionId = result.sessionId;
-    node.cc.tmuxSession = result.tmuxSession;
     node.cc.processId = null;
-    node.cc.resumeMode = result.alive ? "attached" : result.sessionId ? "resume" : "new";
-    node.status = result.alive ? "LeafSuspended" : result.sessionId ? "LeafResumable" : "LeafNew";
+    node.cc.resumeMode = result.sessionId ? "resume" : "new";
+    node.status = result.sessionId ? "LeafResumable" : "LeafNew";
     node.updatedAt = new Date().toISOString();
     saveSession(state.repoRoot, node);
     saveState(state);
     ui.focusId = node.id;
-    ui.message = result.alive ? "Claude session suspended" : "Claude session ended";
+    ui.message = "Claude session ended";
   } catch (error) {
     node.status = "JobFailed";
     node.error = error instanceof Error ? error.message : String(error);
@@ -467,7 +489,7 @@ function sidePanel(state: CcflowState, node: CcflowNode, ui: UiState) {
       worktree.locked ? "#7dd3fc" : worktree.status === "current" ? "#22c55e" : "#facc15",
     ),
     field("commit", node.git.commitHash?.slice(0, 12) ?? "none"),
-    field("cc", node.cc.tmuxSession ? "suspended" : node.cc.sessionId ? "resumable" : "none"),
+    field("cc", node.cc.sessionId ? "resumable" : "none"),
     Text({ content: "stats", fg: "#64748b" }),
     Text({
       content: `${node.stats.filesChanged} files  +${node.stats.insertions}  -${node.stats.deletions}`,
@@ -513,7 +535,7 @@ function detailPanel(state: CcflowState, node: CcflowNode, width: number, height
     `parents: ${node.parents.join(", ") || "none"}`,
     `children: ${node.children.join(", ") || "none"}`,
     `cc session: ${node.cc.sessionId ?? "none"}`,
-    `cc live tmux: ${node.cc.tmuxSession ?? "none"}`,
+    `cc launch: direct`,
     `files changed: ${node.stats.filesChanged}`,
     `insertions: ${node.stats.insertions}`,
     `deletions: ${node.stats.deletions}`,

@@ -3,84 +3,30 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import type { CcflowNode } from "./types.js";
-import { runCommand, tryCommand } from "./shell.js";
+import { logEvent } from "./log.js";
 import { quarantineTerminalInput, releaseStdinForChildProcess, resetTerminalForChildProcess } from "./terminal.js";
 
-function safeSessionName(nodeId: string): string {
-  return `ccflow_${nodeId.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 80)}`;
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-function commandFor(node: CcflowNode): string {
+function interactiveCommandFor(node: CcflowNode): { bin: string; args: string[] } {
   const claudeBin = process.env.CCFLOW_CLAUDE_BIN ?? "claude";
   if (node.cc.sessionId && node.cc.resumeMode === "resume") {
-    return `${claudeBin} --resume ${shellQuote(node.cc.sessionId)}`;
+    return { bin: claudeBin, args: ["--resume", node.cc.sessionId] };
   }
-  return claudeBin;
+  return { bin: claudeBin, args: [] };
 }
 
 export class ClaudeAdapter {
   async attachOrResume(
     node: CcflowNode,
     cwd: string,
-  ): Promise<{ sessionId: string | null; tmuxSession: string | null; alive: boolean }> {
-    const tmuxSession = node.cc.tmuxSession || safeSessionName(node.id);
-    if (!this.hasTmuxSession(tmuxSession)) {
-      this.prepareTmuxDefaults();
-      runCommand("tmux", ["new-session", "-d", "-s", tmuxSession, "-c", cwd, commandFor(node)]);
-      node.cc.tmuxSession = tmuxSession;
-      node.cc.resumeMode = node.cc.sessionId ? "resume" : "new";
-    }
+  ): Promise<{ sessionId: string | null; alive: boolean }> {
+    const command = interactiveCommandFor(node);
 
-    await this.attachTmux(tmuxSession);
-    const alive = this.hasTmuxSession(tmuxSession);
-    const sessionId = this.findRecentClaudeSessionId(cwd) ?? node.cc.sessionId;
-    return { sessionId, tmuxSession: alive ? tmuxSession : null, alive };
-  }
-
-  runHeadless(prompt: string, cwd: string): { ok: boolean; stdout: string; stderr: string } {
-    if (process.env.CCFLOW_DISABLE_CLAUDE_JOBS === "1") {
-      return { ok: false, stdout: "", stderr: "Claude jobs are disabled by CCFLOW_DISABLE_CLAUDE_JOBS." };
-    }
-
-    const claudeBin = process.env.CCFLOW_CLAUDE_BIN ?? "claude";
-    const extraArgs = splitShellWords(process.env.CCFLOW_CLAUDE_ARGS ?? "");
-    const result = spawnSync(claudeBin, [...extraArgs, "-p", prompt], {
-      cwd,
-      encoding: "utf8",
-      stdio: "pipe",
-      env: process.env,
-    });
-    if (result.error) {
-      return { ok: false, stdout: result.stdout ?? "", stderr: result.error.message };
-    }
-    return {
-      ok: (result.status ?? 0) === 0,
-      stdout: result.stdout ?? "",
-      stderr: result.stderr ?? "",
-    };
-  }
-
-  hasTmuxSession(session: string): boolean {
-    return tryCommand("tmux", ["has-session", "-t", session]).ok;
-  }
-
-  private async attachTmux(session: string): Promise<void> {
-    const previousEscape = this.captureTmuxBinding();
-    const previousEscapeTime = this.captureEscapeTime();
-    this.prepareTmuxSession(session);
-    tryCommand("tmux", ["bind-key", "-T", "root", "Escape", "detach-client"]);
-    tryCommand("tmux", ["set-option", "-s", "escape-time", process.env.CCFLOW_TMUX_ESCAPE_TIME ?? "500"]);
-    releaseStdinForChildProcess();
-    resetTerminalForChildProcess();
     await quarantineTerminalInput();
     releaseStdinForChildProcess();
     resetTerminalForChildProcess();
     try {
-      spawnSync("tmux", ["-u", "-2", "attach-session", "-t", session], {
+      const result = spawnSync(command.bin, command.args, {
+        cwd,
         stdio: "inherit",
         env: {
           ...process.env,
@@ -91,41 +37,56 @@ export class ClaudeAdapter {
           FORCE_COLOR: "3",
         },
       });
+      if (result.error) throw result.error;
     } finally {
-      this.restoreTmuxBinding(previousEscape);
-      if (previousEscapeTime !== null) tryCommand("tmux", ["set-option", "-s", "escape-time", previousEscapeTime]);
+      releaseStdinForChildProcess();
+      resetTerminalForChildProcess();
     }
+
+    const sessionId = this.findRecentClaudeSessionId(cwd) ?? node.cc.sessionId;
+    return { sessionId, alive: false };
   }
 
-  private prepareTmuxDefaults(): void {
-    tryCommand("tmux", ["set-option", "-g", "default-terminal", "screen-256color"]);
-    tryCommand("tmux", ["set-option", "-ga", "terminal-overrides", ",*:Tc"]);
-    tryCommand("tmux", ["set-option", "-as", "terminal-features", ",*:RGB"]);
-  }
-
-  private prepareTmuxSession(session: string): void {
-    this.prepareTmuxDefaults();
-    tryCommand("tmux", ["set-option", "-t", session, "status", "off"]);
-    tryCommand("tmux", ["set-window-option", "-t", session, "aggressive-resize", "on"]);
-  }
-
-  private captureTmuxBinding(): string | null {
-    const result = tryCommand("tmux", ["list-keys", "-T", "root", "Escape"]);
-    return result.ok ? result.stdout.trim() : null;
-  }
-
-  private restoreTmuxBinding(previous: string | null): void {
-    tryCommand("tmux", ["unbind-key", "-T", "root", "Escape"]);
-    if (!previous) return;
-    for (const line of previous.split(/\r?\n/).filter(Boolean)) {
-      const args = splitShellWords(line);
-      if (args[0] === "bind-key") tryCommand("tmux", args);
+  runHeadless(repoRoot: string, prompt: string, cwd: string): { ok: boolean; stdout: string; stderr: string } {
+    if (process.env.CCFLOW_DISABLE_CLAUDE_JOBS === "1") {
+      return { ok: false, stdout: "", stderr: "Claude jobs are disabled by CCFLOW_DISABLE_CLAUDE_JOBS." };
     }
-  }
 
-  private captureEscapeTime(): string | null {
-    const result = tryCommand("tmux", ["show-options", "-s", "-v", "escape-time"]);
-    return result.ok ? result.stdout.trim() : null;
+    const claudeBin = process.env.CCFLOW_CLAUDE_BIN ?? "claude";
+    const extraArgs = splitShellWords(process.env.CCFLOW_CLAUDE_ARGS ?? "");
+    logEvent(repoRoot, "claude:headless:start", {
+      bin: claudeBin,
+      cwd,
+      promptLength: prompt.length,
+      promptPreview: prompt.slice(0, 500),
+    });
+    const result = spawnSync(claudeBin, [...extraArgs, "-p", prompt, "--permission-mode", "bypassPermissions", "--output-format", "json", "--model", "haiku"], {
+      cwd,
+      encoding: "utf8",
+      stdio: "pipe",
+      env: process.env,
+    });
+    if (result.error) {
+      logEvent(repoRoot, "claude:headless:error", {
+        cwd,
+        error: result.error.message,
+      });
+      return { ok: false, stdout: result.stdout ?? "", stderr: result.error.message };
+    }
+    logEvent(repoRoot, "claude:headless:done", {
+      cwd,
+      exitCode: result.status ?? null,
+      signal: result.signal ?? null,
+      stdoutLen: result.stdout?.length ?? 0,
+      stderrLen: result.stderr?.length ?? 0,
+      stdoutTail: (result.stdout ?? "").slice(-2000),
+      stderrTail: (result.stderr ?? "").slice(-2000),
+    });
+    return {
+      ok: (result.status ?? 0) === 0,
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+    };
   }
 
   private findRecentClaudeSessionId(cwd: string): string | null {

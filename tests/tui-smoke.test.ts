@@ -84,7 +84,7 @@ test("TUI tab creates a new leaf and delegates README commit to Claude Code", as
   assert.match(fs.readFileSync(path.join(repoRoot, "README.md"), "utf8"), /updated before Claude TUI commit/);
 });
 
-test("TUI enter leaf forwards return and delete keys to the attached session", async () => {
+test("TUI enter leaf forwards return and delete keys to Claude", async () => {
   requirePython3();
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-tui-input-"));
   const git = new GitAdapter();
@@ -105,8 +105,6 @@ test("TUI enter leaf forwards return and delete keys to the attached session", a
         sequence: "\r",
         delay: 10,
         waitForOutputText: "CCFLOW_INPUT_PROBE_READY",
-        injectAfterMs: 50,
-        injectSequence: "\x1b_Gi=31337;OK\x1b\\",
       },
       {
         sequence: "abc\x7f\x1b[3~\r",
@@ -138,11 +136,11 @@ test("TUI enter leaf forwards return and delete keys to the attached session", a
   assert.match(hex, /0d|0a/);
   assert.match(hex, /7f|08/);
   assert.match(hex, /1b5b337e/);
-  assert.doesNotMatch(decoded, /Gi=31337;OK|opentui-notifications|Capabilities=/);
+  assert.doesNotMatch(decoded, /opentui-notifications|Capabilities=/);
   assert.equal(events.at(-1)?.event, "done");
 });
 
-test("TUI enter leaf intercepts only escape when attached to a session", async () => {
+test("TUI enter leaf forwards escape to Claude", async () => {
   requirePython3();
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-tui-escape-"));
   const git = new GitAdapter();
@@ -160,14 +158,14 @@ test("TUI enter leaf intercepts only escape when attached to a session", async (
     repoRoot,
     [
       { sequence: "\r", delay: 10, waitForOutputText: "CCFLOW_ESCAPE_PROBE_READY" },
-      { sequence: "\x1b", delay: 6, waitForFileText: { path: probe.logPath, text: "\"event\":\"no-escape\"" } },
-      { sequence: "q", delay: 0.5 },
+      { sequence: "\x1b", delay: 5, waitForFileText: { path: probe.logPath, text: "\"event\":\"received-escape\"" } },
     ],
     {
       ...process.env,
       CCFLOW_CLAUDE_BIN: probe.binPath,
     },
     30000,
+    { allowTerminateAfterKeys: true },
   );
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -178,8 +176,7 @@ test("TUI enter leaf intercepts only escape when attached to a session", async (
     .filter(Boolean)
     .map((line) => JSON.parse(line) as { event: string; hex?: string });
 
-  assert.equal(events.some((event) => event.event === "received-escape"), false);
-  assert.equal(events.at(-1)?.event, "no-escape");
+  assert.equal(events.some((event) => event.event === "received-escape"), true);
 });
 
 function runTuiPty(
@@ -465,7 +462,7 @@ process.stdin.on("data", (chunk) => {
   record("data", { hex });
   if (hex === "1b") {
     record("received-escape", { hex });
-    process.exit(2);
+    process.exit(0);
   }
 });
 record("start");
@@ -473,7 +470,7 @@ process.stdout.write("CCFLOW_ESCAPE_PROBE_READY\n");
 
 setTimeout(() => {
   record("no-escape");
-  process.exit(0);
+  process.exit(3);
 }, 2000);
 `;
 }

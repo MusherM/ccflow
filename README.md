@@ -7,7 +7,7 @@ CCFlow 是面向 Claude Code 的节点式会话和 Git 工作流管理器。当�
 - 初始化 `.ccflow/ccflow.json`、`.ccflow/prompts.json`、`.ccflow/sessions/`、`.ccflow/jobs/`
 - 在 OpenTUI 节点图中展示 leaf/internal、commit、worktree、Claude session 状态
 - 叶子节点 `Enter` 进入 Claude Code；非叶子节点 `Enter` 只显示只读详情
-- `Esc` 从 tmux/Claude detach 后回到节点图，并保存可恢复 session 信息
+- 叶子节点中直接启动 Claude Code；Claude 退出后回到节点图，并保存可恢复 session 信息
 - `Tab` 从 leaf 向后创建下一个节点：dirty 时启动独立 Claude Code commit job，再冻结父节点
 - `Shift+Tab` 从当前节点的父节点创建同级 leaf
 - `Space` 多选 leaf，`m` 启动 Claude Code merge job 并创建 merge leaf
@@ -26,7 +26,7 @@ src/
     graph.ts       # 节点 DAG 和 spec 不变量
     storage.ts     # .ccflow JSON 持久化
     git.ts         # Git/worktree adapter
-    claude.ts      # Claude/tmux adapter
+    claude.ts      # Claude Code adapter
     jobs.ts        # commit/merge job runner
     prompts.ts     # 默认 prompts.json
     types.ts       # 数据模型
@@ -52,7 +52,7 @@ npm run dev -- /path/to/repo
 | --- | --- |
 | `↑ / ↓ / ← / →` 或 `h/j/k/l` | 在节点间移动 |
 | `Enter` | leaf 进入 Claude；internal 进入详情 |
-| `Esc` | 详情返回图；图中清空选择；Claude 中 detach 回图 |
+| `Esc` | 详情返回图；图中清空选择；Claude 中原样发送给 Claude Code |
 | `Tab` | 从当前 leaf 创建下一个节点 |
 | `Shift+Tab` | 创建同级 leaf |
 | `Space` | 多选 leaf |
@@ -60,6 +60,8 @@ npm run dev -- /path/to/repo
 | `s` | 切换当前 worktree |
 | `d` | 删除当前 leaf 并 reset 到父节点 commit |
 | `q` | 退出 |
+
+进入 Claude Code 后，CCFlow 不再监听快捷键；使用 Claude Code 自身退出方式（如 `/exit` 或 `Ctrl+D`）回到节点图。
 
 ## 验证
 
@@ -97,7 +99,7 @@ npm run proto:opentui
 2. 只有 leaf 节点可继续工作。
 3. internal 节点是历史快照，只读且不可恢复 Claude session。
 4. 创建下一个节点会先 commit 父节点并保存父节点 session。
-5. `Esc` 只 detach Claude/tmux，不主动退出 Claude。
+5. CCFlow 不拦截 Claude Code 内部键盘输入；从 Claude 回图依赖 Claude Code 自身退出。
 6. CCFlow 重启后优先用 `claude --resume <session_id>`。
 7. worktree 是文件状态载体，当前 worktree 必须在 UI 中显式展示。
 8. merge 只接受 leaf，merge 前所有 leaf 必须有 commit。

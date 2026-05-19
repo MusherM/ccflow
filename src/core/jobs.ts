@@ -25,16 +25,6 @@ export interface CommitJobResult {
   error?: string;
 }
 
-export interface MergeJobResult {
-  success: boolean;
-  commitHash?: string;
-  branch?: string;
-  worktreeId?: string;
-  worktreePath?: string;
-  conflicts?: string[];
-  error?: string;
-}
-
 export class JobRunner {
   constructor(
     private readonly git = new GitAdapter(),
@@ -89,11 +79,32 @@ export class JobRunner {
       ].join("\n");
 
       this.updateJob(state.repoRoot, job, "running-claude");
-      const result = this.claude.runHeadless(prompt, worktree.path);
+      logEvent(state.repoRoot, "commit-leaf:claude-start", {
+        nodeId: node.id,
+        worktreePath: worktree.path,
+        promptLength: prompt.length,
+      });
+      const result = this.claude.runHeadless(state.repoRoot, prompt, worktree.path);
+      logEvent(state.repoRoot, "commit-leaf:claude-done", {
+        nodeId: node.id,
+        ok: result.ok,
+        exitCode: null,
+        stdoutLen: result.stdout.length,
+        stderrLen: result.stderr.length,
+        stdoutTail: result.stdout.slice(-1000),
+        stderrTail: result.stderr.slice(-1000),
+      });
       if (!result.ok) throw new Error(result.stderr || result.stdout || "Claude commit job failed");
 
       this.updateJob(state.repoRoot, job, "committing");
-      if (this.git.hasDirtyChanges(worktree.path)) {
+      const dirtyAfter = this.git.hasDirtyChanges(worktree.path);
+      logEvent(state.repoRoot, "commit-leaf:dirty-check", {
+        nodeId: node.id,
+        stillDirty: dirtyAfter,
+        existingCommit,
+        statusShort: this.git.statusShort(worktree.path),
+      });
+      if (dirtyAfter) {
         throw new Error("Claude commit job exited but the worktree is still dirty.");
       }
       const commitHash = this.git.currentCommit(worktree.path);
@@ -260,30 +271,11 @@ export class JobRunner {
       saveSession(state.repoRoot, leaf);
     }
 
-    const mergeResult = await this.runMergeJob(state, leaves);
-    if (!mergeResult.success || !mergeResult.commitHash || !mergeResult.branch || !mergeResult.worktreeId || !mergeResult.worktreePath) {
-      throw new Error(mergeResult.error ?? "Merge job failed");
-    }
-
-    const node = createMergeNode(state, {
-      nodeIds,
-      worktreeId: mergeResult.worktreeId,
-      worktreePath: mergeResult.worktreePath,
-      branchName: mergeResult.branch,
-      commitHash: mergeResult.commitHash,
-    });
-    node.title = this.git.lastCommitMessage(mergeResult.worktreePath).split(/\r?\n/, 1)[0]?.trim() || "Merge";
-    node.stats = this.git.diffStats(mergeResult.worktreePath, mergeResult.commitHash);
-    saveState(state);
-    return node;
-  }
-
-  private async runMergeJob(state: CcflowState, leaves: CcflowNode[]): Promise<MergeJobResult> {
     const branch = mergeBranchName(leaves.map((node) => node.id));
     const worktreePath = worktreePathForBranch(state.repoRoot, branch);
     const worktreeId = worktreeIdFromBranch(branch);
     const base = leaves[0];
-    if (!base?.git.commitHash) return { success: false, error: "Merge base has no commit." };
+    if (!base?.git.commitHash) throw new Error("Merge base has no commit.");
 
     this.git.createMergeWorktree({
       repoRoot: state.repoRoot,
@@ -292,53 +284,115 @@ export class JobRunner {
       baseCommit: base.git.commitHash,
     });
 
-    const job = this.startJob(state.repoRoot, {
-      type: "merge",
-      inputNodeIds: leaves.map((node) => node.id),
-      worktreeId,
-      promptKey: "merge",
+    logEvent(state.repoRoot, "merge-leaves:git-merge-start", {
+      baseNodeId: base.id,
+      baseCommit: base.git.commitHash,
+      sourceNodeIds: leaves.slice(1).map((n) => n.id),
+      sourceCommits: leaves.slice(1).map((n) => n.git.commitHash),
     });
-    try {
-      const prompts = loadPrompts(state.repoRoot);
-      const sourceCommits = leaves.slice(1).map((node) => node.git.commitHash).filter(Boolean);
-      const prompt = [
-        prompts.merge.system,
-        "",
-        prompts.merge.prompt,
-        "",
-        "Merge worktree:",
-        worktreePath,
-        "",
-        "Source commits to merge:",
-        sourceCommits.join("\n"),
-        "",
-        "Run the necessary git merge commands, resolve conflicts, run checks when practical, and create one merge commit.",
-      ].join("\n");
 
-      this.updateJob(state.repoRoot, job, "running-claude");
-      const result = this.claude.runHeadless(prompt, worktreePath);
-      if (!result.ok) throw new Error(result.stderr || result.stdout || "Claude merge job failed");
-
-      const conflicts = this.git.conflictFiles(worktreePath);
-      if (conflicts.length > 0) {
-        job.status = "conflict";
-        job.error = `Merge conflicts: ${conflicts.join(", ")}`;
-        saveJob(state.repoRoot, job);
-        return { success: false, branch, worktreeId, worktreePath, conflicts, error: job.error };
+    // Try automatic git merge for each source commit
+    let allConflicts: string[] = [];
+    for (const leaf of leaves.slice(1)) {
+      if (!leaf.git.commitHash) continue;
+      const mergeResult = this.git.merge(leaf.git.commitHash, worktreePath);
+      if (!mergeResult.ok) {
+        allConflicts = [...allConflicts, ...mergeResult.conflicts];
       }
-      if (this.git.hasDirtyChanges(worktreePath)) {
-        throw new Error("Claude merge job exited but the merge worktree is still dirty.");
-      }
-      const commitHash = this.git.currentCommit(worktreePath);
-      if (!commitHash || commitHash === base.git.commitHash) throw new Error("Claude merge job did not create a merge commit.");
-
-      this.finishJob(state.repoRoot, job, { commitHash, branch, worktreeId, worktreePath });
-      return { success: true, commitHash, branch, worktreeId, worktreePath };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.failJob(state.repoRoot, job, message);
-      return { success: false, branch, worktreeId, worktreePath, error: message };
     }
+
+    logEvent(state.repoRoot, "merge-leaves:git-merge-done", {
+      hasConflicts: allConflicts.length > 0,
+      conflictFiles: allConflicts,
+    });
+
+    if (allConflicts.length === 0) {
+      // Clean auto-merge — create merge commit and node
+      const commitMsg = `Merge ${leaves.slice(1).map((n) => firstLine(n.title)).join(", ")} into ${firstLine(base.title)}`;
+      const commitHash = this.git.commit(worktreePath, commitMsg);
+
+      const node = createMergeNode(state, {
+        nodeIds,
+        worktreeId,
+        worktreePath,
+        branchName: branch,
+        commitHash,
+      });
+      node.title = this.git.lastCommitMessage(worktreePath).split(/\r?\n/, 1)[0]?.trim() || "Merge";
+      node.stats = this.git.diffStats(worktreePath, commitHash);
+      saveState(state);
+      logEvent(state.repoRoot, "merge-leaves:auto-merge-success", { mergeNodeId: node.id, commitHash });
+      return node;
+    }
+
+    // Conflicts detected — create merge node without commit, then try headless resolution
+    const node = createMergeNode(state, {
+      nodeIds,
+      worktreeId,
+      worktreePath,
+      branchName: branch,
+      commitHash: null,
+    });
+    node.status = "MergeConflict";
+    node.title = `Merge (conflicts: ${allConflicts.join(", ")})`;
+    saveState(state);
+
+    logEvent(state.repoRoot, "merge-leaves:conflict-node-created", {
+      mergeNodeId: node.id,
+      conflictFiles: allConflicts,
+    });
+
+    // Run headless Claude to attempt conflict resolution
+    const prompts = loadPrompts(state.repoRoot);
+    const prompt = [
+      prompts.merge.system,
+      "",
+      prompts.merge.prompt,
+      "",
+      "Merge worktree:",
+      worktreePath,
+      "",
+      "Conflict files:",
+      allConflicts.join("\n"),
+      "",
+      "Git status:",
+      this.git.statusShort(worktreePath) || "(clean)",
+      "",
+      "Resolve all merge conflicts and create a merge commit. If you cannot resolve everything, leave the remaining conflicts for manual resolution.",
+    ].join("\n");
+
+    logEvent(state.repoRoot, "merge-leaves:headless-resolution-start", { mergeNodeId: node.id });
+    const result = this.claude.runHeadless(state.repoRoot, prompt, worktreePath);
+    logEvent(state.repoRoot, "merge-leaves:headless-resolution-done", {
+      mergeNodeId: node.id,
+      ok: result.ok,
+      stdoutTail: result.stdout.slice(-1000),
+      stderrTail: result.stderr.slice(-1000),
+    });
+
+    // Check if Claude resolved everything
+    const remainingConflicts = this.git.conflictFiles(worktreePath);
+    if (remainingConflicts.length === 0 && !this.git.hasDirtyChanges(worktreePath)) {
+      const commitHash = this.git.currentCommit(worktreePath);
+      if (commitHash && commitHash !== base.git.commitHash) {
+        node.git.commitHash = commitHash;
+        node.status = "LeafResumable";
+        node.title = this.git.lastCommitMessage(worktreePath).split(/\r?\n/, 1)[0]?.trim() || "Merge";
+        node.stats = this.git.diffStats(worktreePath, commitHash);
+        saveState(state);
+        logEvent(state.repoRoot, "merge-leaves:headless-resolution-success", { mergeNodeId: node.id, commitHash });
+        return node;
+      }
+    }
+
+    // Still conflicted — user needs to take over interactively
+    node.status = "MergeConflict";
+    logEvent(state.repoRoot, "merge-leaves:needs-user-resolution", {
+      mergeNodeId: node.id,
+      remainingConflicts,
+    });
+    saveState(state);
+    return node;
   }
 
   private startJob(

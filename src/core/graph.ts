@@ -45,7 +45,6 @@ export function createInitialState(input: {
       sessionId: null,
       processId: null,
       resumeMode: "new",
-      tmuxSession: null,
     },
     stats: emptyStats(),
     status: "LeafNew",
@@ -135,7 +134,6 @@ export function sealLeafAndCreateChild(
       sessionId: null,
       processId: null,
       resumeMode: "new",
-      tmuxSession: null,
     },
     stats: emptyStats(),
     status: "LeafNew",
@@ -200,7 +198,6 @@ export function branchFromNode(
       sessionId: null,
       processId: null,
       resumeMode: "new",
-      tmuxSession: null,
     },
     stats: emptyStats(),
     status: "LeafNew",
@@ -220,7 +217,7 @@ export function createMergeNode(
     worktreeId: string;
     worktreePath: string;
     branchName: string;
-    commitHash: string;
+    commitHash?: string | null;
     now?: string;
     idFactory?: IdFactory;
   },
@@ -247,7 +244,7 @@ export function createMergeNode(
     createdAt: now,
     updatedAt: now,
     git: {
-      commitHash: input.commitHash,
+      commitHash: input.commitHash ?? null,
       branch: input.branchName,
       worktreeId: input.worktreeId,
     },
@@ -255,7 +252,6 @@ export function createMergeNode(
       sessionId: null,
       processId: null,
       resumeMode: "new",
-      tmuxSession: null,
     },
     stats: emptyStats(),
     status: "LeafNew",
@@ -390,7 +386,6 @@ export function switchCurrentWorktree(state: CcflowState, nodeId: string): Workt
 export function normalizeAfterBoot(state: CcflowState): void {
   for (const node of Object.values(state.nodes)) {
     node.cc.processId = null;
-    node.cc.tmuxSession = null;
     if (node.type !== "leaf") {
       node.cc.resumeMode = node.cc.sessionId ? "resume" : "new";
       continue;

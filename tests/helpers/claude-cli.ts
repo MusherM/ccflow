@@ -43,7 +43,7 @@ export async function withClaudeCliEnv<T>(config: ClaudeCliConfig, fn: () => T |
 export function requirePython3(): void {
   const result = spawnSync("python3", ["--version"], { encoding: "utf8", timeout: 3000 });
   if (result.status !== 0) {
-    throw new Error("python3 is required for PTY-based TUI tests");
+    throw new Error("python3 is required for TUI smoke tests");
   }
 }
 
