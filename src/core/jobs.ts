@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { ClaudeAdapter } from "./claude.js";
-import { GitAdapter, mergeBranchName, worktreeIdFromBranch, worktreePathForBranch } from "./git.js";
+import { GitAdapter, isDefaultBranch, mergeBranchName, slug, worktreeIdFromBranch, worktreePathForBranch } from "./git.js";
 import {
   branchFromNode,
   createMergeNode,
@@ -60,11 +60,23 @@ export class JobRunner {
 
     try {
       this.updateJob(state.repoRoot, job, "inspecting");
+
       const prompts = loadPrompts(state.repoRoot);
       const prompt = [
         prompts.commit.system,
         "",
-        prompts.commit.prompt,
+        "Review the worktree below. You MUST leave it in a clean committed state — or clean with nothing to commit.",
+        "",
+        "Step 1 — Find and ignore non-project files:",
+        "  - Look at every untracked file",
+        "  - For files that do NOT belong (build output, downloads, logs, personal files, etc.), add their patterns to .gitignore",
+        "",
+        "Step 2 — Stage and commit:",
+        "  - Run: git add .  (the updated .gitignore will exclude non-project files)",
+        "  - If there are staged changes, run: git commit -m \"<conventional-commit-message>\"",
+        "  - If nothing is staged after git add ., stop — do NOT create an empty commit",
+        "",
+        "Do not ask questions. Follow the steps in order.",
         "",
         "Node:",
         JSON.stringify({ id: node.id, title: node.title, branch: node.git.branch }, null, 2),
@@ -74,8 +86,6 @@ export class JobRunner {
         "",
         "Git diff:",
         this.git.diff(worktree.path) || "(no diff)",
-        "",
-        "Create exactly one git commit in this worktree before exiting.",
       ].join("\n");
 
       this.updateJob(state.repoRoot, job, "running-claude");
@@ -94,6 +104,7 @@ export class JobRunner {
         stdoutTail: result.stdout.slice(-1000),
         stderrTail: result.stderr.slice(-1000),
       });
+
       if (!result.ok) throw new Error(result.stderr || result.stdout || "Claude commit job failed");
 
       this.updateJob(state.repoRoot, job, "committing");
@@ -105,11 +116,27 @@ export class JobRunner {
         statusShort: this.git.statusShort(worktree.path),
       });
       if (dirtyAfter) {
-        throw new Error("Claude commit job exited but the worktree is still dirty.");
+        logEvent(state.repoRoot, "commit-leaf:fallback-direct", { nodeId: node.id });
+        try {
+          this.git.commit(worktree.path, node.title || "Auto commit");
+        } catch (commitError) {
+          logEvent(state.repoRoot, "commit-leaf:fallback-skipped", {
+            nodeId: node.id,
+            reason: commitError instanceof Error ? commitError.message : String(commitError),
+          });
+        }
       }
       const commitHash = this.git.currentCommit(worktree.path);
-      if (!commitHash || commitHash === existingCommit) {
-        throw new Error("Claude commit job did not create a new commit.");
+      if (!commitHash) throw new Error("Unable to resolve HEAD after commit attempt.");
+
+      // If nothing needed committing, return the existing commit — this is not an error
+      if (commitHash === existingCommit) {
+        this.finishJob(state.repoRoot, job, { commitHash, commitMessage: node.title, summary: node.stats });
+        node.locked = false;
+        node.jobId = null;
+        worktree.locked = false;
+        worktree.status = worktree.id === state.currentWorktreeId ? "current" : "other";
+        return { success: true, commitHash, commitMessage: node.title, summary: node.stats };
       }
 
       const commitMessage = this.git.lastCommitMessage(worktree.path);
@@ -158,7 +185,7 @@ export class JobRunner {
     return child;
   }
 
-  async createSiblingNode(state: CcflowState, nodeId: string): Promise<CcflowNode> {
+  async createSiblingNode(state: CcflowState, nodeId: string, customBranchName?: string): Promise<CcflowNode> {
     const node = getNode(state, nodeId);
     if (node.parents.length === 0) throw new Error("Root node cannot create a sibling");
 
@@ -175,7 +202,9 @@ export class JobRunner {
     const baseCommit = parent.git.commitHash ?? nearestAncestorCommit(state, node.parents[0]!)?.commitHash;
     if (!baseCommit) throw new Error("Cannot create sibling because no ancestor commit exists");
 
-    const branch = `ccflow/sibling-${parent.id.slice(0, 8)}-${Date.now().toString(36)}`;
+    const branch = customBranchName
+      ? `ccflow/${slug(customBranchName)}`
+      : `ccflow/sibling-${parent.id.slice(0, 8)}-${Date.now().toString(36)}`;
     const worktreePath = worktreePathForBranch(state.repoRoot, branch);
     this.git.createWorktree({
       repoRoot: state.repoRoot,
@@ -191,7 +220,7 @@ export class JobRunner {
       branchName: branch,
       baseCommitHash: baseCommit,
     });
-    sibling.title = `Sibling of ${node.title}`;
+    sibling.title = customBranchName ? `${customBranchName} (fork)` : `Sibling of ${node.title}`;
     saveState(state);
     return sibling;
   }
@@ -271,29 +300,40 @@ export class JobRunner {
       saveSession(state.repoRoot, leaf);
     }
 
-    const branch = mergeBranchName(leaves.map((node) => node.id));
-    const worktreePath = worktreePathForBranch(state.repoRoot, branch);
-    const worktreeId = worktreeIdFromBranch(branch);
-    const base = leaves[0];
+    // Determine target branch: prefer main/master if any leaf is on it
+    const mainLeaf = leaves.find((l) => isDefaultBranch(l.git.branch));
+    const targetBranch = mainLeaf?.git.branch ?? mergeBranchName(leaves.map((n) => n.id));
+    const base = mainLeaf ?? leaves[0];
     if (!base?.git.commitHash) throw new Error("Merge base has no commit.");
 
-    this.git.createMergeWorktree({
+    const mergeSuffix = Date.now().toString(36);
+    const worktreeBranch = mainLeaf
+      ? `ccflow/merged-${slug(targetBranch)}-${mergeSuffix}`
+      : `${targetBranch}-${mergeSuffix}`;
+    const worktreePath = worktreePathForBranch(state.repoRoot, worktreeBranch);
+    const worktreeId = worktreeIdFromBranch(worktreeBranch);
+
+    const { detached } = this.git.createMergeWorktree({
       repoRoot: state.repoRoot,
       path: worktreePath,
-      branch,
+      branch: worktreeBranch,
       baseCommit: base.git.commitHash,
+      existingBranch: mainLeaf != null,
     });
 
     logEvent(state.repoRoot, "merge-leaves:git-merge-start", {
       baseNodeId: base.id,
       baseCommit: base.git.commitHash,
-      sourceNodeIds: leaves.slice(1).map((n) => n.id),
-      sourceCommits: leaves.slice(1).map((n) => n.git.commitHash),
+      sourceNodeIds: leaves.filter((n) => n.id !== base.id).map((n) => n.id),
+      sourceCommits: leaves.filter((n) => n.id !== base.id).map((n) => n.git.commitHash),
+      targetBranch,
+      detached,
     });
 
     // Try automatic git merge for each source commit
     let allConflicts: string[] = [];
-    for (const leaf of leaves.slice(1)) {
+    const sources = leaves.filter((l) => l.id !== base.id);
+    for (const leaf of sources) {
       if (!leaf.git.commitHash) continue;
       const mergeResult = this.git.merge(leaf.git.commitHash, worktreePath);
       if (!mergeResult.ok) {
@@ -307,15 +347,26 @@ export class JobRunner {
     });
 
     if (allConflicts.length === 0) {
-      // Clean auto-merge — create merge commit and node
-      const commitMsg = `Merge ${leaves.slice(1).map((n) => firstLine(n.title)).join(", ")} into ${firstLine(base.title)}`;
-      const commitHash = this.git.commit(worktreePath, commitMsg);
+      // git merge --no-commit stages the changes; create our own commit with a custom message.
+      // If the merge was a no-op (already up to date), use the existing HEAD.
+      let commitHash: string;
+      if (this.git.hasDirtyChanges(worktreePath)) {
+        const commitMsg = `Merge ${sources.map((n) => firstLine(n.title)).join(", ")} into ${firstLine(base.title)}`;
+        commitHash = this.git.commit(worktreePath, commitMsg);
+      } else {
+        commitHash = this.git.currentCommit(worktreePath) ?? base.git.commitHash;
+      }
+
+      if (detached && mainLeaf) {
+        this.git.updateRef(state.repoRoot, `refs/heads/${targetBranch}`, commitHash);
+        this.git.checkoutNewBranch(worktreePath, worktreeBranch);
+      }
 
       const node = createMergeNode(state, {
         nodeIds,
         worktreeId,
         worktreePath,
-        branchName: branch,
+        branchName: targetBranch,
         commitHash,
       });
       node.title = this.git.lastCommitMessage(worktreePath).split(/\r?\n/, 1)[0]?.trim() || "Merge";
@@ -330,7 +381,7 @@ export class JobRunner {
       nodeIds,
       worktreeId,
       worktreePath,
-      branchName: branch,
+      branchName: targetBranch,
       commitHash: null,
     });
     node.status = "MergeConflict";
@@ -375,6 +426,10 @@ export class JobRunner {
     if (remainingConflicts.length === 0 && !this.git.hasDirtyChanges(worktreePath)) {
       const commitHash = this.git.currentCommit(worktreePath);
       if (commitHash && commitHash !== base.git.commitHash) {
+        if (detached && mainLeaf) {
+          this.git.updateRef(state.repoRoot, `refs/heads/${targetBranch}`, commitHash);
+          this.git.checkoutNewBranch(worktreePath, worktreeBranch);
+        }
         node.git.commitHash = commitHash;
         node.status = "LeafResumable";
         node.title = this.git.lastCommitMessage(worktreePath).split(/\r?\n/, 1)[0]?.trim() || "Merge";

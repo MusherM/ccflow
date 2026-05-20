@@ -102,8 +102,34 @@ export class GitAdapter {
     path: string;
     branch: string;
     baseCommit: string;
-  }): void {
-    this.createWorktree(input);
+    existingBranch?: boolean;
+  }): { id: string; path: string; branch: string; detached: boolean } {
+    fs.mkdirSync(path.dirname(input.path), { recursive: true });
+    if (!fs.existsSync(input.path)) {
+      if (input.existingBranch) {
+        runCommand("git", ["worktree", "add", "--detach", input.path, input.baseCommit], {
+          cwd: input.repoRoot,
+        });
+      } else {
+        runCommand("git", ["worktree", "add", "-B", input.branch, input.path, input.baseCommit], {
+          cwd: input.repoRoot,
+        });
+      }
+    }
+    return {
+      id: worktreeIdFromBranch(input.branch),
+      path: input.path,
+      branch: input.branch,
+      detached: input.existingBranch ?? false,
+    };
+  }
+
+  updateRef(repoRoot: string, ref: string, commit: string): void {
+    runCommand("git", ["update-ref", ref, commit], { cwd: repoRoot });
+  }
+
+  checkoutNewBranch(cwd: string, branch: string): void {
+    runCommand("git", ["checkout", "-b", branch], { cwd });
   }
 
   conflictFiles(cwd: string): string[] {
@@ -112,7 +138,7 @@ export class GitAdapter {
   }
 
   merge(sourceCommit: string, cwd: string): { ok: boolean; conflicts: string[] } {
-    const result = tryCommand("git", ["merge", sourceCommit, "--no-edit", "--no-ff"], { cwd });
+    const result = tryCommand("git", ["merge", sourceCommit, "--no-commit", "--no-ff"], { cwd });
     if (result.ok) return { ok: true, conflicts: [] };
     return { ok: false, conflicts: this.conflictFiles(cwd) };
   }
@@ -134,6 +160,10 @@ export class GitAdapter {
       symbolsChanged: [],
     };
   }
+}
+
+export function isDefaultBranch(branch: string): boolean {
+  return branch === "main" || branch === "master";
 }
 
 export function slug(value: string): string {

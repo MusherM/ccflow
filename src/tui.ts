@@ -17,6 +17,12 @@ import type { CcflowNode, CcflowState } from "./core/types.js";
 type Direction = "left" | "right" | "up" | "down";
 type UiMode = "graph" | "detail";
 
+interface InputMode {
+  prompt: string;
+  onConfirm: (value: string) => void;
+  onCancel: () => void;
+}
+
 interface UiState {
   focusId: string;
   selectedIds: Set<string>;
@@ -24,6 +30,8 @@ interface UiState {
   message: string;
   task: string | null;
   busy: boolean;
+  inputMode: InputMode | null;
+  inputValue: string;
 }
 
 interface TuiExit {
@@ -52,6 +60,8 @@ export async function runCcflowTui(state: CcflowState): Promise<void> {
     message: "",
     task: null,
     busy: false,
+    inputMode: null,
+    inputValue: "",
   };
 
   while (true) {
@@ -134,6 +144,40 @@ async function runGraphOnce(
   };
 
   renderer.keyInput.on("keypress", (key) => {
+    if (ui.inputMode) {
+      if (key.name === "enter" || key.name === "return" || key.sequence === "\r") {
+        const cb = ui.inputMode.onConfirm;
+        const val = ui.inputValue;
+        ui.inputMode = null;
+        ui.inputValue = "";
+        cb(val);
+        key.preventDefault();
+        return;
+      }
+      if (key.name === "escape") {
+        const cb = ui.inputMode.onCancel;
+        ui.inputMode = null;
+        ui.inputValue = "";
+        cb();
+        key.preventDefault();
+        return;
+      }
+      if (key.name === "backspace") {
+        ui.inputValue = ui.inputValue.slice(0, -1);
+        rerender();
+        key.preventDefault();
+        return;
+      }
+      if (key.sequence && key.sequence.length === 1 && key.sequence.charCodeAt(0) >= 32 && !key.ctrl && !key.meta) {
+        ui.inputValue += key.sequence;
+        rerender();
+        key.preventDefault();
+        return;
+      }
+      key.preventDefault();
+      return;
+    }
+
     if (ui.busy) return;
     const direction = keyToDirection(key);
     if (direction && ui.mode === "graph") {
@@ -168,13 +212,29 @@ async function runGraphOnce(
     }
 
     if (isShiftTab(key)) {
-      void runAction("creating sibling...", async () => {
-        const sibling = await jobs.createSiblingNode(state, ui.focusId);
-        ui.focusId = sibling.id;
-        ui.selectedIds.clear();
-        ui.mode = "graph";
-        ui.message = `Created sibling ${sibling.id}`;
-      });
+      ui.inputMode = {
+        prompt: "Branch name (enter=confirm, esc=default): ",
+        onConfirm: (value: string) => {
+          void runAction("creating sibling...", async () => {
+            const sibling = await jobs.createSiblingNode(state, ui.focusId, value || undefined);
+            ui.focusId = sibling.id;
+            ui.selectedIds.clear();
+            ui.mode = "graph";
+            ui.message = `Created sibling ${sibling.id}`;
+          });
+        },
+        onCancel: () => {
+          void runAction("creating sibling...", async () => {
+            const sibling = await jobs.createSiblingNode(state, ui.focusId);
+            ui.focusId = sibling.id;
+            ui.selectedIds.clear();
+            ui.mode = "graph";
+            ui.message = `Created sibling ${sibling.id}`;
+          });
+        },
+      };
+      ui.inputValue = "";
+      rerender();
       key.preventDefault();
       return;
     }
@@ -572,10 +632,12 @@ function footer(ui: UiState) {
       backgroundColor: "#070b10",
     },
     Text({
-      content: ui.mode === "detail"
-        ? "esc graph   q quit"
-        : "arrows/hjkl move   enter open/detail   tab next   shift+tab sibling   space select   m merge   s switch   d delete leaf   q quit",
-      fg: "#94a3b8",
+      content: ui.inputMode
+        ? `${ui.inputMode.prompt}${ui.inputValue}█`
+        : ui.mode === "detail"
+          ? "esc graph   q quit"
+          : "arrows/hjkl move   enter open/detail   tab next   shift+tab sibling   space select   m merge   s switch   d delete leaf   q quit",
+      fg: ui.inputMode ? "#7dd3fc" : "#94a3b8",
     }),
   );
 }
