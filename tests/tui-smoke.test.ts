@@ -5,10 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { GitAdapter } from "../src/core/git.js";
+import { createPendingChildFromLeaf } from "../src/core/graph.js";
 import { JobRunner } from "../src/core/jobs.js";
-import { loadOrInitState, statePath } from "../src/core/storage.js";
+import { loadOrInitState, saveState, statePath } from "../src/core/storage.js";
 import type { CcflowState } from "../src/core/types.js";
-import { claudeCliConfig, requirePython3 } from "./helpers/claude-cli.js";
+import { claudeCliConfig, requirePython3, withClaudeSettingsSnapshot } from "./helpers/claude-cli.js";
 
 test("TUI delete key removes the current latest leaf and preserves one current worktree", async () => {
   requirePython3();
@@ -57,14 +58,16 @@ test("TUI tab creates a new leaf and delegates README commit to Claude Code", as
   const beforeCommit = git.currentCommit(repoRoot);
   fs.appendFileSync(path.join(repoRoot, "README.md"), "updated before Claude TUI commit\n");
 
-  const result = runTuiPty(
-    repoRoot,
-    [
-      { sequence: "\t", delay: 120, waitForNodeCount: 2 },
-      { sequence: "q", delay: 0.5 },
-    ],
-    claude.env,
-    150000,
+  const result = withClaudeSettingsSnapshot(() =>
+    runTuiPty(
+      repoRoot,
+      [
+        { sequence: "\t", delay: 300, waitForNodeCount: 2 },
+        { sequence: "q", delay: 0.5 },
+      ],
+      claude.env,
+      360000,
+    ),
   );
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -84,99 +87,34 @@ test("TUI tab creates a new leaf and delegates README commit to Claude Code", as
   assert.match(fs.readFileSync(path.join(repoRoot, "README.md"), "utf8"), /updated before Claude TUI commit/);
 });
 
-test("TUI enter leaf forwards return and delete keys to Claude", async () => {
+test("TUI shows blocked state instead of entering a pending child", () => {
   requirePython3();
-  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-tui-input-"));
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-tui-locked-"));
   const git = new GitAdapter();
   git.ensureRepo(repoRoot);
   fs.writeFileSync(path.join(repoRoot, "README.md"), "initial\n");
   git.commit(repoRoot, "test: initial readme");
-  loadOrInitState({
+  const state = loadOrInitState({
     repoRoot,
     branch: git.currentBranch(repoRoot),
     commitHash: git.currentCommit(repoRoot),
   });
-  const probe = createInputProbe(repoRoot);
-
-  const result = runTuiPty(
-    repoRoot,
-    [
-      {
-        sequence: "\r",
-        delay: 10,
-        waitForOutputText: "CCFLOW_INPUT_PROBE_READY",
-      },
-      {
-        sequence: "abc\x7f\x1b[3~\r",
-        delay: 15,
-        waitForFileText: { path: probe.logPath, text: "\"event\":\"done\"" },
-      },
-    ],
-    {
-      ...process.env,
-      CCFLOW_CLAUDE_BIN: probe.binPath,
-    },
-    30000,
-    { allowTerminateAfterKeys: true },
-  );
-
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  const events = fs
-    .readFileSync(probe.logPath, "utf8")
-    .trim()
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as { event: string; hex?: string });
-  const hex = events
-    .filter((event) => event.event === "data")
-    .map((event) => event.hex ?? "")
-    .join("");
-  const decoded = Buffer.from(hex, "hex").toString("utf8");
-
-  assert.match(hex, /0d|0a/);
-  assert.match(hex, /7f|08/);
-  assert.match(hex, /1b5b337e/);
-  assert.doesNotMatch(decoded, /opentui-notifications|Capabilities=/);
-  assert.equal(events.at(-1)?.event, "done");
-});
-
-test("TUI enter leaf forwards escape to Claude", async () => {
-  requirePython3();
-  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-tui-escape-"));
-  const git = new GitAdapter();
-  git.ensureRepo(repoRoot);
-  fs.writeFileSync(path.join(repoRoot, "README.md"), "initial\n");
-  git.commit(repoRoot, "test: initial readme");
-  loadOrInitState({
-    repoRoot,
-    branch: git.currentBranch(repoRoot),
-    commitHash: git.currentCommit(repoRoot),
+  const child = createPendingChildFromLeaf(state, {
+    leafId: state.currentNodeId,
+    jobId: "job_commit_smoke",
   });
-  const probe = createEscapeProbe(repoRoot);
+  state.worktrees[child.git.worktreeId]!.locked = true;
+  saveState(state);
 
-  const result = runTuiPty(
-    repoRoot,
-    [
-      { sequence: "\r", delay: 10, waitForOutputText: "CCFLOW_ESCAPE_PROBE_READY" },
-      { sequence: "\x1b", delay: 5, waitForFileText: { path: probe.logPath, text: "\"event\":\"received-escape\"" } },
-    ],
-    {
-      ...process.env,
-      CCFLOW_CLAUDE_BIN: probe.binPath,
-    },
-    30000,
-    { allowTerminateAfterKeys: true },
-  );
+  const result = runTuiPty(repoRoot, [
+    { sequence: "\r", delay: 5, waitForOutputText: "Interrupted job requires retry" },
+    { sequence: "q", delay: 0.5 },
+  ]);
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  const events = fs
-    .readFileSync(probe.logPath, "utf8")
-    .trim()
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as { event: string; hex?: string });
-
-  assert.equal(events.some((event) => event.event === "received-escape"), true);
+  const finalState = JSON.parse(fs.readFileSync(statePath(repoRoot), "utf8")) as CcflowState;
+  assert.equal(finalState.currentNodeId, child.id);
+  assert.equal(finalState.nodes[child.id]?.status, "ParentCommitFailed");
 });
 
 function runTuiPty(
@@ -188,7 +126,6 @@ function runTuiPty(
     waitForFile?: string;
     waitForOutputText?: string;
     waitForFileText?: { path: string; text: string };
-    repeatUntilFileText?: boolean;
     injectAfterMs?: number;
     injectSequence?: string;
   }>,
@@ -302,11 +239,9 @@ def file_ready(path, text=None):
     except Exception:
         return False
 
-def wait_for_file(path, text, timeout, repeat_sequence=None):
+def wait_for_file(path, text, timeout):
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if repeat_sequence is not None:
-            os.write(master, repeat_sequence)
         drain(0.1)
         if file_ready(path, text):
             return True
@@ -330,7 +265,7 @@ def wait_for_output(text, timeout):
 completed_keys = True
 drain(0.8)
 for item in keys:
-    if item["sequence"] and not item.get("repeatUntilFileText"):
+    if item["sequence"]:
         os.write(master, item["sequence"].encode("utf-8"))
     if "injectSequence" in item:
         time.sleep(float(item.get("injectAfterMs", 0)) / 1000)
@@ -349,8 +284,7 @@ for item in keys:
             break
     elif "waitForFileText" in item:
         target = item["waitForFileText"]
-        repeat_sequence = item["sequence"].encode("utf-8") if item.get("repeatUntilFileText") else None
-        if not wait_for_file(target["path"], target["text"], float(item["delay"]), repeat_sequence):
+        if not wait_for_file(target["path"], target["text"], float(item["delay"])):
             completed_keys = False
             break
     else:
@@ -376,101 +310,5 @@ sys.stdout.buffer.write(output)
 if allow_terminate_after_keys and completed_keys:
     sys.exit(0)
 sys.exit(child_status or 0)
-`;
-}
-
-function createInputProbe(repoRoot: string): { binPath: string; logPath: string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-input-probe-"));
-  const binPath = path.join(dir, "input-probe.cjs");
-  const logPath = path.join(repoRoot, ".ccflow", "input-probe.jsonl");
-  fs.writeFileSync(binPath, inputProbeSource());
-  fs.chmodSync(binPath, 0o755);
-  return { binPath, logPath };
-}
-
-function createEscapeProbe(repoRoot: string): { binPath: string; logPath: string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-escape-probe-"));
-  const binPath = path.join(dir, "escape-probe.cjs");
-  const logPath = path.join(repoRoot, ".ccflow", "escape-probe.jsonl");
-  fs.writeFileSync(binPath, escapeProbeSource());
-  fs.chmodSync(binPath, 0o755);
-  return { binPath, logPath };
-}
-
-function inputProbeSource(): string {
-  return String.raw`#!/usr/bin/env node
-const fs = require("node:fs");
-const path = require("node:path");
-
-const logPath = process.env.CCFLOW_INPUT_PROBE_LOG || process.argv[2] || path.join(process.cwd(), ".ccflow", "input-probe.jsonl");
-const chunks = [];
-
-function record(event, payload = {}) {
-  if (!logPath) return;
-  fs.mkdirSync(path.dirname(logPath), { recursive: true });
-  fs.appendFileSync(logPath, JSON.stringify({ event, ...payload }) + "\n");
-}
-
-function allHex() {
-  return Buffer.concat(chunks).toString("hex");
-}
-
-function maybeDone() {
-  const hex = allHex();
-  const sawReturn = hex.includes("0d") || hex.includes("0a");
-  const sawBackspace = hex.includes("7f") || hex.includes("08");
-  const sawForwardDelete = hex.includes("1b5b337e");
-  if (sawReturn && sawBackspace && sawForwardDelete) {
-    record("done", { hex });
-    process.exit(0);
-  }
-}
-
-if (process.stdin.setRawMode) process.stdin.setRawMode(true);
-process.stdin.resume();
-process.stdin.on("data", (chunk) => {
-  chunks.push(chunk);
-  record("data", { hex: chunk.toString("hex") });
-  maybeDone();
-});
-record("start");
-process.stdout.write("CCFLOW_INPUT_PROBE_READY\n");
-
-setTimeout(() => {
-  record("timeout", { hex: allHex() });
-  process.exit(3);
-}, 15000);
-`;
-}
-
-function escapeProbeSource(): string {
-  return String.raw`#!/usr/bin/env node
-const fs = require("node:fs");
-const path = require("node:path");
-
-const logPath = process.env.CCFLOW_ESCAPE_PROBE_LOG || process.argv[2] || path.join(process.cwd(), ".ccflow", "escape-probe.jsonl");
-
-function record(event, payload = {}) {
-  fs.mkdirSync(path.dirname(logPath), { recursive: true });
-  fs.appendFileSync(logPath, JSON.stringify({ event, ...payload }) + "\n");
-}
-
-if (process.stdin.setRawMode) process.stdin.setRawMode(true);
-process.stdin.resume();
-process.stdin.on("data", (chunk) => {
-  const hex = chunk.toString("hex");
-  record("data", { hex });
-  if (hex === "1b") {
-    record("received-escape", { hex });
-    process.exit(0);
-  }
-});
-record("start");
-process.stdout.write("CCFLOW_ESCAPE_PROBE_READY\n");
-
-setTimeout(() => {
-  record("no-escape");
-  process.exit(3);
-}, 2000);
 `;
 }

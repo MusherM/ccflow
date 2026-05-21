@@ -143,6 +143,10 @@ export class GitAdapter {
     return { ok: false, conflicts: this.conflictFiles(cwd) };
   }
 
+  isAncestor(ancestorCommit: string, descendantCommit: string, cwd: string): boolean {
+    return tryCommand("git", ["merge-base", "--is-ancestor", ancestorCommit, descendantCommit], { cwd }).ok;
+  }
+
   lastCommitMessage(cwd: string): string {
     const result = tryCommand("git", ["log", "-1", "--pretty=%B"], { cwd });
     return result.ok ? result.stdout.trim() : "";

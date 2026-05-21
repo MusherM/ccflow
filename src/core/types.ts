@@ -6,9 +6,13 @@ export type NodeStatus =
   | "LeafSuspended"
   | "LeafResumable"
   | "LeafDirty"
+  | "AwaitingParentCommit"
   | "Committing"
   | "CommitFailed"
+  | "ParentCommitting"
+  | "ParentCommitFailed"
   | "Branching"
+  | "BranchFailed"
   | "Deleting"
   | "MergeRunning"
   | "MergeConflict"
@@ -52,6 +56,9 @@ export interface CcflowNode {
   status: NodeStatus;
   locked?: boolean;
   jobId?: string | null;
+  pendingParentJobId?: string | null;
+  blockedReason?: string | null;
+  conflictFiles?: string[];
   error?: string | null;
 }
 
@@ -112,16 +119,18 @@ export type JobStatus =
   | "committing"
   | "success"
   | "conflict"
+  | "interrupted"
   | "failed";
 
 export interface JobRecord {
   jobId: string;
-  type: "commit" | "merge";
+  type: "commit" | "merge" | "branch" | "delete";
   status: JobStatus;
   nodeId?: string;
   inputNodeIds?: string[];
   worktreeId?: string;
   promptKey: "commit" | "merge";
+  recoverable?: boolean;
   createdAt: string;
   updatedAt: string;
   error?: string;

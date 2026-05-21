@@ -29,6 +29,9 @@ test("creating the next leaf delegates the dirty-worktree commit to Claude Code"
   const runner = new JobRunner(git, new ClaudeAdapter());
   const child = await withClaudeCliEnv(claude, () => runner.createNextNode(state, state.currentNodeId));
 
+  assert.equal(child.status, "AwaitingParentCommit");
+  await waitFor(() => getNode(state, child.parents[0]!).status === "sealed");
+
   assert.equal(state.worktrees[state.currentWorktreeId]?.status, "current");
   assert.equal(state.worktrees[state.currentWorktreeId]?.locked, false);
   assert.equal(state.nodes[child.id]?.type, "leaf");
@@ -217,6 +220,68 @@ test("CommitFailed node recovers when worktree cleaned and commitLeaf re-runs", 
   assertGraphInvariants(state);
 });
 
+test("merge with a main leaf advances main and records the merge node on main", async () => {
+  const { state, repoRoot } = createRepoState();
+  const git = new GitAdapter();
+  const runner = new JobRunner(git);
+  const root = state.nodes[state.currentNodeId]!;
+  const mainLeaf = await runner.createNextNode(state, root.id);
+  const featureLeaf = createCommittedSibling(state, repoRoot, root.id, "feature-merge", {
+    fileName: "feature.txt",
+    content: "feature change\n",
+    message: "feat: feature change",
+  });
+
+  fs.writeFileSync(path.join(repoRoot, "main.txt"), "main change\n");
+  const mainCommit = git.commit(repoRoot, "feat: main change");
+  mainLeaf.git.commitHash = mainCommit;
+  mainLeaf.title = "feat: main change";
+
+  const merge = await runner.mergeLeaves(state, [mainLeaf.id, featureLeaf.id]);
+
+  assert.notEqual(merge.git.commitHash, mainCommit);
+  assert.equal(merge.git.branch, "main");
+  assert.equal(merge.git.worktreeId, "wt_main");
+  assert.equal(state.currentNodeId, merge.id);
+  assert.equal(state.currentWorktreeId, merge.git.worktreeId);
+  assert.equal(state.worktrees[merge.git.worktreeId]?.status, "current");
+  assert.equal(state.worktrees[merge.git.worktreeId]?.path, repoRoot);
+  assert.equal(git.currentBranch(repoRoot), "main");
+  assert.equal(git.currentCommit(repoRoot), merge.git.commitHash);
+  assert.equal(git.hasDirtyChanges(repoRoot), false);
+  assertGraphInvariants(state);
+});
+
+test("merge rejects a selection whose source commits are already ancestors of the base", async () => {
+  const { state, repoRoot } = createRepoState();
+  const git = new GitAdapter();
+  const runner = new JobRunner(git);
+  const root = state.nodes[state.currentNodeId]!;
+  const mainLeaf = await runner.createNextNode(state, root.id);
+  const featureLeaf = createCommittedSibling(state, repoRoot, root.id, "ancestor-merge", {
+    fileName: "feature.txt",
+    content: "feature change\n",
+    message: "feat: feature change",
+  });
+
+  fs.writeFileSync(path.join(repoRoot, "main.txt"), "main change\n");
+  git.commit(repoRoot, "feat: main change");
+  const mergeResult = git.merge(featureLeaf.git.commitHash!, repoRoot);
+  assert.equal(mergeResult.ok, true);
+  const mergedCommit = git.commit(repoRoot, "merge feature into main");
+  mainLeaf.git.commitHash = mergedCommit;
+  mainLeaf.title = "merge feature into main";
+  const nodeCount = Object.keys(state.nodes).length;
+
+  await assert.rejects(
+    () => runner.mergeLeaves(state, [mainLeaf.id, featureLeaf.id]),
+    /already included/i,
+  );
+
+  assert.equal(Object.keys(state.nodes).length, nodeCount);
+  assertGraphInvariants(state);
+});
+
 test("normalizeAfterBoot converts stale transient session state on locked nodes", () => {
   const state = createInitialState({
     repoRoot: "/repo",
@@ -252,4 +317,42 @@ function createRepoState(): { state: CcflowState; repoRoot: string } {
     commitHash: git.currentCommit(repoRoot),
   });
   return { state, repoRoot };
+}
+
+function createCommittedSibling(
+  state: CcflowState,
+  repoRoot: string,
+  parentId: string,
+  suffix: string,
+  change: { fileName: string; content: string; message: string },
+) {
+  const git = new GitAdapter();
+  const parent = getNode(state, parentId);
+  const branchName = branchNameForNode(suffix);
+  const worktreePath = worktreePathForBranch(repoRoot, branchName);
+  git.createWorktree({
+    repoRoot,
+    path: worktreePath,
+    branch: branchName,
+    baseCommit: parent.git.commitHash!,
+  });
+  const sibling = branchFromNode(state, {
+    nodeId: parent.id,
+    worktreeId: worktreeIdFromBranch(branchName),
+    worktreePath,
+    branchName,
+  });
+  fs.writeFileSync(path.join(worktreePath, change.fileName), change.content);
+  sibling.git.commitHash = git.commit(worktreePath, change.message);
+  sibling.title = change.message;
+  return sibling;
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(predicate(), true);
 }

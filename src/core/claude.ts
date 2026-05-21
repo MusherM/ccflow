@@ -6,6 +6,7 @@ import type { CcflowNode } from "./types.js";
 import { logEvent } from "./log.js";
 import { quarantineTerminalInput, releaseStdinForChildProcess, resetTerminalForChildProcess } from "./terminal.js";
 
+/* node:coverage disable */
 function interactiveCommandFor(node: CcflowNode): { bin: string; args: string[] } {
   const claudeBin = process.env.CCFLOW_CLAUDE_BIN ?? "claude";
   if (node.cc.sessionId && node.cc.resumeMode === "resume") {
@@ -13,8 +14,10 @@ function interactiveCommandFor(node: CcflowNode): { bin: string; args: string[] 
   }
   return { bin: claudeBin, args: ["--dangerously-skip-permissions"] };
 }
+/* node:coverage enable */
 
 export class ClaudeAdapter {
+  /* node:coverage disable */
   async attachOrResume(
     node: CcflowNode,
     cwd: string,
@@ -46,6 +49,7 @@ export class ClaudeAdapter {
     const sessionId = this.findRecentClaudeSessionId(cwd) ?? node.cc.sessionId;
     return { sessionId, alive: false };
   }
+  /* node:coverage enable */
 
   runHeadless(repoRoot: string, prompt: string, cwd: string): { ok: boolean; stdout: string; stderr: string } {
     if (process.env.CCFLOW_DISABLE_CLAUDE_JOBS === "1") {

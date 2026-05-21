@@ -8,7 +8,7 @@ import {
 } from "@opentui/core";
 import { ClaudeAdapter } from "./core/claude.js";
 import { GitAdapter } from "./core/git.js";
-import { getNode, getWorktree, isLeafNode, switchCurrentWorktree } from "./core/graph.js";
+import { getNode, getWorktree, isEditableLeaf, isLeafNode, isOperationBlockedNode, switchCurrentWorktree } from "./core/graph.js";
 import { JobRunner } from "./core/jobs.js";
 import { saveSession, saveState } from "./core/storage.js";
 import { quarantineTerminalInput, releaseStdinForChildProcess, resetTerminalForChildProcess } from "./core/terminal.js";
@@ -178,7 +178,6 @@ async function runGraphOnce(
       return;
     }
 
-    if (ui.busy) return;
     const direction = keyToDirection(key);
     if (direction && ui.mode === "graph") {
       ui.focusId = moveFocus(state, ui.focusId, direction);
@@ -186,11 +185,17 @@ async function runGraphOnce(
       key.preventDefault();
       return;
     }
+    if (ui.busy) return;
 
     if (key.name === "return" || key.name === "enter") {
       const node = getNode(state, ui.focusId);
       if (!isLeafNode(state, node.id)) {
         ui.mode = "detail";
+        rerender();
+        return;
+      }
+      if (!isEditableLeaf(state, node.id) && node.status !== "MergeConflict") {
+        ui.message = node.blockedReason || node.error || `Node is not editable: ${node.status}`;
         rerender();
         return;
       }
@@ -212,11 +217,15 @@ async function runGraphOnce(
     }
 
     if (isShiftTab(key)) {
+      const plan = jobs.branchCreationPlan(state, ui.focusId);
+      const choices = plan.branches.map((branch, index) => `${index + 1}:${branch}`).join("  ");
       ui.inputMode = {
-        prompt: "Branch name (enter=confirm, esc=default): ",
+        prompt: plan.requiresName
+          ? "New branch name: "
+          : `Branch (${choices}  new:<name>): `,
         onConfirm: (value: string) => {
           void runAction("creating sibling...", async () => {
-            const sibling = await jobs.createSiblingNode(state, ui.focusId, value || undefined);
+            const sibling = await jobs.createSiblingNode(state, ui.focusId, parseBranchTarget(value, plan));
             ui.focusId = sibling.id;
             ui.selectedIds.clear();
             ui.mode = "graph";
@@ -225,7 +234,7 @@ async function runGraphOnce(
         },
         onCancel: () => {
           void runAction("creating sibling...", async () => {
-            const sibling = await jobs.createSiblingNode(state, ui.focusId);
+            const sibling = await jobs.createSiblingNode(state, ui.focusId, plan.defaultBranch ? { kind: "existing", branch: plan.defaultBranch } : undefined);
             ui.focusId = sibling.id;
             ui.selectedIds.clear();
             ui.mode = "graph";
@@ -240,12 +249,12 @@ async function runGraphOnce(
     }
 
     if (isTab(key)) {
-      void runAction("committing... creating next node...", async () => {
+      void runAction("creating next node...", async () => {
         const child = await jobs.createNextNode(state, ui.focusId);
         ui.focusId = child.id;
         ui.selectedIds.clear();
         ui.mode = "graph";
-        ui.message = `Created ${child.id}`;
+        ui.message = child.status === "AwaitingParentCommit" ? `Created ${child.id}; parent commit running` : `Created ${child.id}`;
       });
       key.preventDefault();
       return;
@@ -275,6 +284,10 @@ async function runGraphOnce(
 
     if (key.sequence === "s") {
       void runAction("Switching worktree", () => {
+        if (isOperationBlockedNode(state, ui.focusId)) {
+          const node = getNode(state, ui.focusId);
+          throw new Error(node.blockedReason || node.error || `Node is blocked: ${node.status}`);
+        }
         const worktree = switchCurrentWorktree(state, ui.focusId);
         ui.message = `Current worktree: ${worktree.path}`;
       });
@@ -364,7 +377,13 @@ async function enterLeaf(
 function refreshDirtyStatuses(state: CcflowState, git: GitAdapter): void {
   for (const node of Object.values(state.nodes)) {
     if (!isLeafNode(state, node.id)) continue;
-    if (node.locked || node.status === "LeafRunning" || node.status === "LeafSuspended") continue;
+    if (
+      node.locked ||
+      node.status === "LeafRunning" ||
+      node.status === "LeafSuspended" ||
+      node.status === "AwaitingParentCommit" ||
+      node.status === "ParentCommitFailed"
+    ) continue;
     const worktree = state.worktrees[node.git.worktreeId];
     if (!worktree) continue;
     try {
@@ -525,6 +544,32 @@ function nodeCard(
 function sidePanel(state: CcflowState, node: CcflowNode, ui: UiState) {
   const worktree = getWorktree(state, node.git.worktreeId);
   const accent = nodeAccent(state, node);
+  const children = [
+    Text({ content: node.title, fg: accent, attributes: TextAttributes.BOLD }),
+    field("id", node.id),
+    field("type", node.type, node.type === "leaf" ? "#facc15" : "#94a3b8"),
+    field("status", node.status, statusColor(node.status)),
+    field("branch", worktree.branch, accent),
+    field(
+      "worktree",
+      worktree.locked ? `${worktree.status} locked` : worktree.status,
+      worktree.locked ? "#7dd3fc" : worktree.status === "current" ? "#22c55e" : "#facc15",
+    ),
+    field("commit", node.git.commitHash?.slice(0, 12) ?? "none"),
+    field("cc", node.cc.sessionId ? "resumable" : "none"),
+    node.jobId ? field("job", node.jobId, "#7dd3fc") : null,
+    node.pendingParentJobId ? field("parent job", node.pendingParentJobId, "#7dd3fc") : null,
+    node.conflictFiles?.length ? field("conflicts", node.conflictFiles.join(", "), "#fb7185") : null,
+    node.blockedReason ? field("blocked", node.blockedReason, "#facc15") : null,
+    node.error ? field("error", node.error, "#fb7185") : null,
+    Text({ content: "stats", fg: "#64748b" }),
+    Text({
+      content: `${node.stats.filesChanged} files  +${node.stats.insertions}  -${node.stats.deletions}`,
+      fg: "#cbd5e1",
+    }),
+    Text({ content: truncate(worktree.path, 34), fg: "#94a3b8" }),
+    Text({ content: ui.message || "Ready", fg: ui.busy ? "#facc15" : "#64748b", wrapMode: "word" }),
+  ].filter((child) => child != null);
   return Box(
     {
       width: 36,
@@ -538,25 +583,7 @@ function sidePanel(state: CcflowState, node: CcflowNode, ui: UiState) {
       flexDirection: "column",
       gap: 1,
     },
-    Text({ content: node.title, fg: accent, attributes: TextAttributes.BOLD }),
-    field("id", node.id),
-    field("type", node.type, node.type === "leaf" ? "#facc15" : "#94a3b8"),
-    field("status", node.status, statusColor(node.status)),
-    field("branch", worktree.branch, accent),
-    field(
-      "worktree",
-      worktree.locked ? `${worktree.status} locked` : worktree.status,
-      worktree.locked ? "#7dd3fc" : worktree.status === "current" ? "#22c55e" : "#facc15",
-    ),
-    field("commit", node.git.commitHash?.slice(0, 12) ?? "none"),
-    field("cc", node.cc.sessionId ? "resumable" : "none"),
-    Text({ content: "stats", fg: "#64748b" }),
-    Text({
-      content: `${node.stats.filesChanged} files  +${node.stats.insertions}  -${node.stats.deletions}`,
-      fg: "#cbd5e1",
-    }),
-    Text({ content: truncate(worktree.path, 34), fg: "#94a3b8" }),
-    Text({ content: ui.message || "Ready", fg: ui.busy ? "#facc15" : "#64748b", wrapMode: "word" }),
+    ...children,
   );
 }
 
@@ -595,6 +622,10 @@ function detailPanel(state: CcflowState, node: CcflowNode, width: number, height
     `parents: ${node.parents.join(", ") || "none"}`,
     `children: ${node.children.join(", ") || "none"}`,
     `cc session: ${node.cc.sessionId ?? "none"}`,
+    `job: ${node.jobId ?? "none"}`,
+    `parent job: ${node.pendingParentJobId ?? "none"}`,
+    `blocked: ${node.blockedReason ?? "none"}`,
+    `conflicts: ${node.conflictFiles?.join(", ") || "none"}`,
     `cc launch: direct`,
     `files changed: ${node.stats.filesChanged}`,
     `insertions: ${node.stats.insertions}`,
@@ -648,6 +679,21 @@ function field(label: string, value: string, color = "#cbd5e1") {
     Text({ content: label.padEnd(10), fg: "#64748b" }),
     Text({ content: value, fg: color }),
   );
+}
+
+function parseBranchTarget(value: string, plan: ReturnType<JobRunner["branchCreationPlan"]>) {
+  const trimmed = value.trim();
+  if (plan.requiresName) return { kind: "new" as const, name: trimmed };
+  if (!trimmed && plan.defaultBranch) return { kind: "existing" as const, branch: plan.defaultBranch };
+  const numeric = Number(trimmed);
+  if (Number.isInteger(numeric) && numeric >= 1 && numeric <= plan.branches.length) {
+    return { kind: "existing" as const, branch: plan.branches[numeric - 1]! };
+  }
+  if (trimmed.startsWith("new:")) {
+    return { kind: "new" as const, name: trimmed.slice("new:".length).trim() };
+  }
+  if (plan.branches.includes(trimmed)) return { kind: "existing" as const, branch: trimmed };
+  return { kind: "new" as const, name: trimmed };
 }
 
 function keyToDirection(key: KeyEvent): Direction | null {
@@ -797,13 +843,15 @@ function nodeAccent(state: CcflowState, node: CcflowNode): string {
 function statusColor(status: string): string {
   if (status.includes("Failed") || status.includes("Conflict")) return "#fb7185";
   if (status.includes("Running") || status.includes("Committing") || status.includes("Merge") || status === "Deleting") return "#7dd3fc";
+  if (status.includes("Awaiting")) return "#facc15";
   if (status === "sealed") return "#94a3b8";
   return "#cbd5e1";
 }
 
 function nodeIndicator(state: CcflowState, node: CcflowNode): string {
-  if (node.status === "CommitFailed" || node.status === "MergeConflict" || node.status === "JobFailed") return "◆";
-  if (node.status === "LeafRunning" || node.status === "Committing" || node.status === "MergeRunning" || node.status === "Deleting") return "◌";
+  if (node.status === "CommitFailed" || node.status === "MergeConflict" || node.status === "JobFailed" || node.status === "ParentCommitFailed") return "◆";
+  if (node.status === "LeafRunning" || node.status === "Committing" || node.status === "ParentCommitting" || node.status === "MergeRunning" || node.status === "Deleting") return "◌";
+  if (node.status === "AwaitingParentCommit") return "◌";
   if (node.type === "internal") return "○";
   return getWorktree(state, node.git.worktreeId).id === state.currentWorktreeId ? "●" : "●";
 }

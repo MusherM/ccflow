@@ -4,8 +4,12 @@ import { ClaudeAdapter } from "./claude.js";
 import { GitAdapter, isDefaultBranch, mergeBranchName, slug, worktreeIdFromBranch, worktreePathForBranch } from "./git.js";
 import {
   branchFromNode,
+  createPendingChildFromLeaf,
   createMergeNode,
   deleteLeafNode,
+  ensureCommitReady,
+  failPendingParentCommit,
+  finalizePendingParentCommit,
   firstLine,
   getNode,
   getWorktree,
@@ -25,16 +29,33 @@ export interface CommitJobResult {
   error?: string;
 }
 
+export type BranchTarget =
+  | { kind: "new"; name?: string }
+  | { kind: "existing"; branch: string };
+
+export interface BranchCreationPlan {
+  branches: string[];
+  defaultBranch: string | null;
+  requiresName: boolean;
+}
+
 export class JobRunner {
   constructor(
     private readonly git = new GitAdapter(),
     private readonly claude = new ClaudeAdapter(),
   ) {}
 
-  async commitLeaf(state: CcflowState, nodeId: string): Promise<CommitJobResult> {
+  async commitLeaf(
+    state: CcflowState,
+    nodeId: string,
+    options: { allowPendingInternal?: boolean; job?: JobRecord } = {},
+  ): Promise<CommitJobResult> {
     const node = getNode(state, nodeId);
     const worktree = getWorktree(state, node.git.worktreeId);
-    if (!isLeafNode(state, node.id)) return { success: false, error: "Only leaf nodes can be committed by ccflow." };
+    const canCommitPendingInternal = options.allowPendingInternal && node.type === "internal" && node.status === "ParentCommitting";
+    if (!isLeafNode(state, node.id) && !canCommitPendingInternal) {
+      return { success: false, error: "Only leaf nodes can be committed by ccflow." };
+    }
 
     const existingCommit = this.git.currentCommit(worktree.path);
     if (!this.git.hasDirtyChanges(worktree.path)) {
@@ -46,13 +67,13 @@ export class JobRunner {
       };
     }
 
-    const job = this.startJob(state.repoRoot, {
+    const job = options.job ?? this.startJob(state.repoRoot, {
       type: "commit",
       nodeId: node.id,
       worktreeId: worktree.id,
       promptKey: "commit",
     });
-    node.status = "Committing";
+    node.status = canCommitPendingInternal ? "ParentCommitting" : "Committing";
     node.locked = true;
     node.jobId = job.jobId;
     worktree.locked = true;
@@ -126,6 +147,9 @@ export class JobRunner {
           });
         }
       }
+      if (this.git.hasDirtyChanges(worktree.path)) {
+        throw new Error("Commit job left dirty changes after Claude returned successfully.");
+      }
       const commitHash = this.git.currentCommit(worktree.path);
       if (!commitHash) throw new Error("Unable to resolve HEAD after commit attempt.");
 
@@ -167,6 +191,26 @@ export class JobRunner {
   async createNextNode(state: CcflowState, nodeId: string): Promise<CcflowNode> {
     const node = getNode(state, nodeId);
     const worktree = getWorktree(state, node.git.worktreeId);
+    if (!isLeafNode(state, node.id)) throw new Error("Only leaf nodes can create next node");
+    if (node.locked || worktree.locked) throw new Error(`Cannot create next node while node or worktree is locked: ${node.id}`);
+
+    if (this.git.hasDirtyChanges(worktree.path)) {
+      const job = this.startJob(state.repoRoot, {
+        type: "commit",
+        nodeId: node.id,
+        worktreeId: worktree.id,
+        promptKey: "commit",
+      });
+      const child = createPendingChildFromLeaf(state, {
+        leafId: node.id,
+        jobId: job.jobId,
+      });
+      worktree.locked = true;
+      saveState(state);
+      void this.completePendingNextNode(state, node.id, child.id, job);
+      return child;
+    }
+
     const commitResult = await this.commitLeaf(state, node.id);
     if (!commitResult.success || !commitResult.commitHash) {
       throw new Error(commitResult.error ?? "Commit job failed");
@@ -185,9 +229,39 @@ export class JobRunner {
     return child;
   }
 
-  async createSiblingNode(state: CcflowState, nodeId: string, customBranchName?: string): Promise<CcflowNode> {
+  branchCreationPlan(state: CcflowState, nodeId: string): BranchCreationPlan {
+    const node = getNode(state, nodeId);
+    const branches = Object.values(state.worktrees)
+      .map((worktree) => worktree.branch)
+      .filter((branch) => branch.startsWith("ccflow/"));
+    const defaultBranch = branches.includes(node.git.branch) ? node.git.branch : (branches[0] ?? null);
+    return {
+      branches,
+      defaultBranch,
+      requiresName: branches.length === 0,
+    };
+  }
+
+  normalizeNewBranchName(state: CcflowState, value: string | undefined): string {
+    const normalized = slug(value ?? "");
+    if (!normalized) throw new Error("Branch name cannot be empty");
+    const branch = normalized.startsWith("ccflow/") ? normalized : `ccflow/${normalized}`;
+    const worktreeId = worktreeIdFromBranch(branch);
+    if (state.worktrees[worktreeId]) throw new Error(`Branch already exists: ${branch}`);
+    return branch;
+  }
+
+  async createSiblingNode(
+    state: CcflowState,
+    nodeId: string,
+    target: string | BranchTarget | undefined = undefined,
+  ): Promise<CcflowNode> {
     const node = getNode(state, nodeId);
     if (node.parents.length === 0) throw new Error("Root node cannot create a sibling");
+    if (node.locked || getWorktree(state, node.git.worktreeId).locked) {
+      throw new Error(`Cannot create sibling while node or worktree is locked: ${node.id}`);
+    }
+    ensureCommitReady(state, node.id);
 
     if (isLeafNode(state, node.id)) {
       const result = await this.commitLeaf(state, node.id);
@@ -202,25 +276,32 @@ export class JobRunner {
     const baseCommit = parent.git.commitHash ?? nearestAncestorCommit(state, node.parents[0]!)?.commitHash;
     if (!baseCommit) throw new Error("Cannot create sibling because no ancestor commit exists");
 
-    const branch = customBranchName
-      ? `ccflow/${slug(customBranchName)}`
-      : `ccflow/sibling-${parent.id.slice(0, 8)}-${Date.now().toString(36)}`;
+    const targetChoice: BranchTarget =
+      typeof target === "string"
+        ? { kind: "new", name: target }
+        : (target ?? { kind: "new", name: `sibling-${parent.id.slice(0, 8)}-${Date.now().toString(36)}` });
+    const branch = targetChoice.kind === "existing"
+      ? targetChoice.branch
+      : this.normalizeNewBranchName(state, targetChoice.name);
     const worktreePath = worktreePathForBranch(state.repoRoot, branch);
-    this.git.createWorktree({
-      repoRoot: state.repoRoot,
-      path: worktreePath,
-      branch,
-      baseCommit,
-    });
+    const existingWorktree = state.worktrees[worktreeIdFromBranch(branch)];
+    if (!existingWorktree) {
+      this.git.createWorktree({
+        repoRoot: state.repoRoot,
+        path: worktreePath,
+        branch,
+        baseCommit,
+      });
+    }
 
     const sibling = branchFromNode(state, {
       nodeId: parent.id,
       worktreeId: worktreeIdFromBranch(branch),
-      worktreePath,
+      worktreePath: existingWorktree?.path ?? worktreePath,
       branchName: branch,
       baseCommitHash: baseCommit,
     });
-    sibling.title = customBranchName ? `${customBranchName} (fork)` : `Sibling of ${node.title}`;
+    sibling.title = targetChoice.kind === "new" && targetChoice.name ? `${targetChoice.name} (fork)` : `Sibling of ${node.title}`;
     saveState(state);
     return sibling;
   }
@@ -232,6 +313,7 @@ export class JobRunner {
     if (!parentId) throw new Error("Cannot delete the root leaf node");
     const resetTarget = nearestAncestorCommit(state, node.id);
     const worktree = getWorktree(state, node.git.worktreeId);
+    if (worktree.locked && !node.locked) throw new Error(`Cannot delete leaf while worktree is locked: ${worktree.id}`);
     logEvent(state.repoRoot, "delete-leaf:start", {
       nodeId: node.id,
       parentIds: node.parents,
@@ -262,6 +344,7 @@ export class JobRunner {
           reason: "No ancestor commit found; deleting graph node only.",
         });
       }
+      worktree.locked = false;
       const { focusId } = deleteLeafNode(state, { nodeId: node.id, force: true });
       const focusWorktree = getWorktree(state, getNode(state, focusId).git.worktreeId);
       focusWorktree.locked = false;
@@ -292,6 +375,7 @@ export class JobRunner {
     for (const leaf of leaves) {
       if (!isLeafNode(state, leaf.id)) throw new Error("Only leaf nodes can be merged");
       if (leaf.locked) throw new Error(`Cannot merge locked node: ${leaf.id}`);
+      ensureCommitReady(state, leaf.id);
       const result = await this.commitLeaf(state, leaf.id);
       if (!result.success || !result.commitHash) throw new Error(result.error ?? `Commit failed for ${leaf.id}`);
       leaf.git.commitHash = result.commitHash;
@@ -300,26 +384,58 @@ export class JobRunner {
       saveSession(state.repoRoot, leaf);
     }
 
-    // Determine target branch: prefer main/master if any leaf is on it
+    // Determine target branch: prefer main/master if any leaf is on it.
+    // In that case the merge result belongs to the checked-out default branch,
+    // so the merge must happen in that branch's existing worktree.
     const mainLeaf = leaves.find((l) => isDefaultBranch(l.git.branch));
     const targetBranch = mainLeaf?.git.branch ?? mergeBranchName(leaves.map((n) => n.id));
     const base = mainLeaf ?? leaves[0];
     if (!base?.git.commitHash) throw new Error("Merge base has no commit.");
+    const sources = leaves.filter((l) => l.id !== base.id);
+    const alreadyIncludedSources = sources.filter(
+      (source) =>
+        source.git.commitHash && this.git.isAncestor(source.git.commitHash, base.git.commitHash!, state.repoRoot),
+    );
+    if (sources.length > 0 && alreadyIncludedSources.length === sources.length) {
+      logEvent(state.repoRoot, "merge-leaves:already-included", {
+        baseNodeId: base.id,
+        baseCommit: base.git.commitHash,
+        sourceNodeIds: alreadyIncludedSources.map((source) => source.id),
+        sourceCommits: alreadyIncludedSources.map((source) => source.git.commitHash),
+      });
+      throw new Error(
+        `Selected commits are already included in ${base.id} (${base.git.commitHash.slice(0, 7)}); no merge node created.`,
+      );
+    }
 
-    const mergeSuffix = Date.now().toString(36);
-    const worktreeBranch = mainLeaf
-      ? `ccflow/merged-${slug(targetBranch)}-${mergeSuffix}`
-      : `${targetBranch}-${mergeSuffix}`;
-    const worktreePath = worktreePathForBranch(state.repoRoot, worktreeBranch);
-    const worktreeId = worktreeIdFromBranch(worktreeBranch);
+    let worktreeBranch: string;
+    let worktreePath: string;
+    let worktreeId: string;
+    let detached = false;
 
-    const { detached } = this.git.createMergeWorktree({
-      repoRoot: state.repoRoot,
-      path: worktreePath,
-      branch: worktreeBranch,
-      baseCommit: base.git.commitHash,
-      existingBranch: mainLeaf != null,
-    });
+    if (mainLeaf) {
+      const mainWorktree = getWorktree(state, mainLeaf.git.worktreeId);
+      worktreeBranch = targetBranch;
+      worktreePath = mainWorktree.path;
+      worktreeId = mainWorktree.id;
+      const currentCommit = this.git.currentCommit(worktreePath);
+      if (currentCommit !== base.git.commitHash) {
+        throw new Error(
+          `Default branch worktree is at ${currentCommit?.slice(0, 7) ?? "unknown"}, expected ${base.git.commitHash.slice(0, 7)}.`,
+        );
+      }
+    } else {
+      const mergeSuffix = Date.now().toString(36);
+      worktreeBranch = `${targetBranch}-${mergeSuffix}`;
+      worktreePath = worktreePathForBranch(state.repoRoot, worktreeBranch);
+      worktreeId = worktreeIdFromBranch(worktreeBranch);
+      detached = this.git.createMergeWorktree({
+        repoRoot: state.repoRoot,
+        path: worktreePath,
+        branch: worktreeBranch,
+        baseCommit: base.git.commitHash,
+      }).detached;
+    }
 
     logEvent(state.repoRoot, "merge-leaves:git-merge-start", {
       baseNodeId: base.id,
@@ -327,12 +443,12 @@ export class JobRunner {
       sourceNodeIds: leaves.filter((n) => n.id !== base.id).map((n) => n.id),
       sourceCommits: leaves.filter((n) => n.id !== base.id).map((n) => n.git.commitHash),
       targetBranch,
+      worktreeBranch,
       detached,
     });
 
     // Try automatic git merge for each source commit
     let allConflicts: string[] = [];
-    const sources = leaves.filter((l) => l.id !== base.id);
     for (const leaf of sources) {
       if (!leaf.git.commitHash) continue;
       const mergeResult = this.git.merge(leaf.git.commitHash, worktreePath);
@@ -348,7 +464,7 @@ export class JobRunner {
 
     if (allConflicts.length === 0) {
       // git merge --no-commit stages the changes; create our own commit with a custom message.
-      // If the merge was a no-op (already up to date), use the existing HEAD.
+      // If git produces no staged file changes, keep the merge worktree at its current HEAD.
       let commitHash: string;
       if (this.git.hasDirtyChanges(worktreePath)) {
         const commitMsg = `Merge ${sources.map((n) => firstLine(n.title)).join(", ")} into ${firstLine(base.title)}`;
@@ -357,8 +473,7 @@ export class JobRunner {
         commitHash = this.git.currentCommit(worktreePath) ?? base.git.commitHash;
       }
 
-      if (detached && mainLeaf) {
-        this.git.updateRef(state.repoRoot, `refs/heads/${targetBranch}`, commitHash);
+      if (detached) {
         this.git.checkoutNewBranch(worktreePath, worktreeBranch);
       }
 
@@ -366,7 +481,7 @@ export class JobRunner {
         nodeIds,
         worktreeId,
         worktreePath,
-        branchName: targetBranch,
+        branchName: worktreeBranch,
         commitHash,
       });
       node.title = this.git.lastCommitMessage(worktreePath).split(/\r?\n/, 1)[0]?.trim() || "Merge";
@@ -381,11 +496,12 @@ export class JobRunner {
       nodeIds,
       worktreeId,
       worktreePath,
-      branchName: targetBranch,
+      branchName: worktreeBranch,
       commitHash: null,
     });
     node.status = "MergeConflict";
     node.title = `Merge (conflicts: ${allConflicts.join(", ")})`;
+    node.conflictFiles = allConflicts;
     saveState(state);
 
     logEvent(state.repoRoot, "merge-leaves:conflict-node-created", {
@@ -426,14 +542,14 @@ export class JobRunner {
     if (remainingConflicts.length === 0 && !this.git.hasDirtyChanges(worktreePath)) {
       const commitHash = this.git.currentCommit(worktreePath);
       if (commitHash && commitHash !== base.git.commitHash) {
-        if (detached && mainLeaf) {
-          this.git.updateRef(state.repoRoot, `refs/heads/${targetBranch}`, commitHash);
+        if (detached) {
           this.git.checkoutNewBranch(worktreePath, worktreeBranch);
         }
         node.git.commitHash = commitHash;
-        node.status = "LeafResumable";
+        node.status = node.cc.sessionId ? "LeafResumable" : "LeafNew";
         node.title = this.git.lastCommitMessage(worktreePath).split(/\r?\n/, 1)[0]?.trim() || "Merge";
         node.stats = this.git.diffStats(worktreePath, commitHash);
+        node.conflictFiles = [];
         saveState(state);
         logEvent(state.repoRoot, "merge-leaves:headless-resolution-success", { mergeNodeId: node.id, commitHash });
         return node;
@@ -442,6 +558,7 @@ export class JobRunner {
 
     // Still conflicted — user needs to take over interactively
     node.status = "MergeConflict";
+    node.conflictFiles = remainingConflicts.length > 0 ? remainingConflicts : allConflicts;
     logEvent(state.repoRoot, "merge-leaves:needs-user-resolution", {
       mergeNodeId: node.id,
       remainingConflicts,
@@ -488,5 +605,50 @@ export class JobRunner {
     job.error = error;
     job.updatedAt = new Date().toISOString();
     saveJob(repoRoot, job);
+  }
+
+  private async completePendingNextNode(
+    state: CcflowState,
+    parentId: string,
+    childId: string,
+    job: JobRecord,
+  ): Promise<void> {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const parent = getNode(state, parentId);
+    const worktree = getWorktree(state, parent.git.worktreeId);
+    try {
+      const result = await this.commitLeaf(state, parentId, {
+        allowPendingInternal: true,
+        job,
+      });
+      if (!result.success || !result.commitHash) throw new Error(result.error ?? "Commit job failed");
+      finalizePendingParentCommit(state, {
+        parentId,
+        commitHash: result.commitHash,
+        commitMessage: result.commitMessage ?? parent.title,
+        sessionId: parent.cc.sessionId,
+        stats: result.summary ?? parent.stats,
+      });
+      worktree.locked = false;
+      worktree.status = worktree.id === state.currentWorktreeId ? "current" : "other";
+      saveSession(state.repoRoot, parent);
+      saveState(state);
+      logEvent(state.repoRoot, "create-next:parent-commit-success", {
+        parentId,
+        childId,
+        commitHash: result.commitHash,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failPendingParentCommit(state, { parentId, error: message });
+      worktree.locked = false;
+      worktree.status = worktree.id === state.currentWorktreeId ? "current" : "other";
+      saveState(state);
+      logEvent(state.repoRoot, "create-next:parent-commit-failed", {
+        parentId,
+        childId,
+        error: message,
+      });
+    }
   }
 }

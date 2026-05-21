@@ -43,3 +43,4 @@ src/
 - 永远用中文回复用户。
 - 核心工作流、TUI 交互、架构或数据模型变化时，必须同步更新 `README.md`。
 - `src/core/graph.ts` 中的不变量是系统边界，修改前先补测试。
+- 所有涉及 Claude Code/cc 的测试必须走真实 cc 流程，不能用 fake/stub/mock 替代；需要直接在沙箱外运行测试，确保 `claude`/`cc` CLI 能被真实调用起来。

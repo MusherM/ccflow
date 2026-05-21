@@ -8,10 +8,14 @@
     "start": "bun run src/main.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
+    "test": "npm run build && node --test --test-concurrency=1 dist/tests/*.test.js",
+    "test:coverage": "npm run build && node --test --test-concurrency=1 --experimental-test-coverage --test-coverage-include='dist/src/**/*.js' --test-coverage-exclude='dist/tests/**/*.js' --test-coverage-lines=95 dist/tests/*.test.js",
     "proto:ink": "tsx --tsconfig prototypes/ink-node-view/tsconfig.json prototypes/ink-node-view/src/main.tsx",
     "proto:opentui": "bun run prototypes/opentui-node-view/src/main.ts",
-    "proto:typecheck": "tsc -p prototypes/ink-node-view/tsconfig.json --noEmit && tsc -p prototypes/opentui-node-view/tsconfig.json --noEmit"
+    "proto:ink-tree": "tsx --tsconfig prototypes/ink-tree-view/tsconfig.json prototypes/ink-tree-view/src/main.tsx",
+    "proto:ink-outline": "tsx --tsconfig prototypes/ink-outline-view/tsconfig.json prototypes/ink-outline-view/src/main.tsx",
+    "proto:opentui-tree": "bun run prototypes/opentui-tree-view/src/main.ts",
+    "proto:typecheck": "tsc -p prototypes/ink-node-view/tsconfig.json --noEmit && tsc -p prototypes/opentui-node-view/tsconfig.json --noEmit && tsc -p prototypes/ink-tree-view/tsconfig.json --noEmit && tsc -p prototypes/ink-outline-view/tsconfig.json --noEmit && tsc -p prototypes/opentui-tree-view/tsconfig.json --noEmit"
   },
   "dependencies": {
     "@opentui/core": "^0.2.14",

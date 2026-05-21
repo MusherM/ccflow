@@ -85,6 +85,78 @@ export function isLeafNode(state: CcflowState, nodeId: string): boolean {
   return node.type === "leaf" && node.children.length === 0;
 }
 
+export function isMergeResultNode(node: CcflowNode): boolean {
+  return node.parents.length > 1;
+}
+
+export function hasNodeStats(node: CcflowNode): boolean {
+  return (
+    node.stats.filesChanged !== 0 ||
+    node.stats.insertions !== 0 ||
+    node.stats.deletions !== 0 ||
+    node.stats.symbolsChanged.length > 0
+  );
+}
+
+export function isPrunableEmptyNode(state: CcflowState, nodeId: string): boolean {
+  const node = getNode(state, nodeId);
+  return (
+    node.parents.length > 0 &&
+    node.children.length === 0 &&
+    !isMergeResultNode(node) &&
+    !node.git.commitHash &&
+    !node.cc.sessionId &&
+    !hasNodeStats(node) &&
+    !node.locked &&
+    !node.jobId &&
+    !node.pendingParentJobId
+  );
+}
+
+export function isOperationBlockedNode(state: CcflowState, nodeId: string): boolean {
+  const node = getNode(state, nodeId);
+  const worktree = getWorktree(state, node.git.worktreeId);
+  return (
+    Boolean(node.locked) ||
+    Boolean(worktree.locked) ||
+    node.status === "AwaitingParentCommit" ||
+    node.status === "ParentCommitting" ||
+    node.status === "ParentCommitFailed" ||
+    node.status === "CommitFailed" ||
+    node.status === "JobFailed"
+  );
+}
+
+export function isEditableLeaf(state: CcflowState, nodeId: string): boolean {
+  const node = getNode(state, nodeId);
+  return isLeafNode(state, node.id) && !isOperationBlockedNode(state, node.id);
+}
+
+export function isSafeFocusTarget(state: CcflowState, nodeId: string): boolean {
+  const node = state.nodes[nodeId];
+  if (!node) return false;
+  return node.type === "leaf" || node.status === "sealed" || node.status === "MergeConflict" || Boolean(node.error);
+}
+
+export function ensureCommitReady(state: CcflowState, nodeId: string): void {
+  const node = getNode(state, nodeId);
+  if (node.status === "AwaitingParentCommit") {
+    throw new Error(`Node is waiting for parent commit: ${node.id}`);
+  }
+  if (node.status === "ParentCommitFailed") {
+    throw new Error(`Node parent commit failed: ${node.id}`);
+  }
+  if (node.pendingParentJobId) {
+    throw new Error(`Node is waiting for parent job ${node.pendingParentJobId}`);
+  }
+  for (const parentId of node.parents) {
+    const parent = getNode(state, parentId);
+    if (parent.status === "ParentCommitting" || parent.status === "ParentCommitFailed") {
+      throw new Error(`Parent commit is not ready for node: ${node.id}`);
+    }
+  }
+}
+
 export function sealLeafAndCreateChild(
   state: CcflowState,
   input: {
@@ -147,6 +219,139 @@ export function sealLeafAndCreateChild(
   return child;
 }
 
+export function createPendingChildFromLeaf(
+  state: CcflowState,
+  input: {
+    leafId: string;
+    jobId: string;
+    now?: string;
+    idFactory?: IdFactory;
+  },
+): CcflowNode {
+  const leaf = getNode(state, input.leafId);
+  if (!isLeafNode(state, leaf.id)) {
+    throw new Error("Only leaf nodes can create next node");
+  }
+
+  const now = input.now ?? new Date().toISOString();
+  const idFactory = input.idFactory ?? createId;
+  const childId = idFactory("node");
+
+  leaf.type = "internal";
+  leaf.status = "ParentCommitting";
+  leaf.locked = true;
+  leaf.jobId = input.jobId;
+  leaf.error = null;
+  leaf.blockedReason = null;
+  leaf.updatedAt = now;
+  leaf.children.push(childId);
+
+  const child: CcflowNode = {
+    id: childId,
+    title: "New session",
+    type: "leaf",
+    parents: [leaf.id],
+    children: [],
+    createdAt: now,
+    updatedAt: now,
+    git: {
+      commitHash: null,
+      branch: leaf.git.branch,
+      worktreeId: leaf.git.worktreeId,
+    },
+    cc: {
+      sessionId: null,
+      processId: null,
+      resumeMode: "new",
+    },
+    stats: emptyStats(),
+    status: "AwaitingParentCommit",
+    locked: true,
+    pendingParentJobId: input.jobId,
+    blockedReason: "Waiting for parent commit to finish.",
+  };
+
+  state.nodes[child.id] = child;
+  const worktree = getWorktree(state, child.git.worktreeId);
+  worktree.currentNodeId = child.id;
+  state.currentNodeId = child.id;
+  assertGraphInvariants(state);
+  return child;
+}
+
+export function finalizePendingParentCommit(
+  state: CcflowState,
+  input: {
+    parentId: string;
+    commitHash: string;
+    commitMessage: string;
+    sessionId: string | null;
+    stats: NodeStats;
+    now?: string;
+  },
+): void {
+  const parent = getNode(state, input.parentId);
+  if (parent.status !== "ParentCommitting" && parent.status !== "Committing") {
+    throw new Error(`Node is not waiting for a parent commit: ${parent.id}`);
+  }
+  const now = input.now ?? new Date().toISOString();
+  const jobId = parent.jobId ?? null;
+  parent.status = "sealed";
+  parent.locked = false;
+  parent.jobId = null;
+  parent.git.commitHash = input.commitHash;
+  parent.title = firstLine(input.commitMessage) || parent.title;
+  parent.stats = input.stats;
+  parent.cc.sessionId = input.sessionId;
+  parent.cc.processId = null;
+  parent.cc.resumeMode = input.sessionId ? "resume" : "new";
+  parent.error = null;
+  parent.blockedReason = null;
+  parent.updatedAt = now;
+
+  for (const childId of parent.children) {
+    const child = getNode(state, childId);
+    if (child.pendingParentJobId === jobId || child.status === "AwaitingParentCommit") {
+      child.locked = false;
+      child.pendingParentJobId = null;
+      child.blockedReason = null;
+      child.status = child.cc.sessionId ? "LeafResumable" : "LeafNew";
+      child.updatedAt = now;
+    }
+  }
+  assertGraphInvariants(state);
+}
+
+export function failPendingParentCommit(
+  state: CcflowState,
+  input: {
+    parentId: string;
+    error: string;
+    now?: string;
+  },
+): void {
+  const parent = getNode(state, input.parentId);
+  const now = input.now ?? new Date().toISOString();
+  parent.status = "ParentCommitFailed";
+  parent.locked = false;
+  parent.error = input.error;
+  parent.blockedReason = "Parent commit failed.";
+  parent.updatedAt = now;
+  for (const childId of parent.children) {
+    const child = getNode(state, childId);
+    if (child.status === "AwaitingParentCommit" || child.pendingParentJobId === parent.jobId) {
+      child.status = "ParentCommitFailed";
+      child.locked = true;
+      child.pendingParentJobId = null;
+      child.error = input.error;
+      child.blockedReason = "Parent commit failed. Retry the parent commit or delete this pending child.";
+      child.updatedAt = now;
+    }
+  }
+  parent.jobId = null;
+  assertGraphInvariants(state);
+}
+
 export function branchFromNode(
   state: CcflowState,
   input: {
@@ -160,6 +365,7 @@ export function branchFromNode(
   },
 ): CcflowNode {
   const base = getNode(state, input.nodeId);
+  ensureCommitReady(state, base.id);
   if (!base.git.commitHash && !input.baseCommitHash) {
     throw new Error("Cannot branch from node without commit");
   }
@@ -228,6 +434,7 @@ export function createMergeNode(
   for (const node of leaves) {
     if (!isLeafNode(state, node.id)) throw new Error("Only leaf nodes can be merged");
     if (node.locked) throw new Error(`Cannot merge locked node: ${node.id}`);
+    ensureCommitReady(state, node.id);
     if (!node.git.commitHash) throw new Error(`Cannot merge node without commit: ${node.id}`);
   }
 
@@ -257,13 +464,17 @@ export function createMergeNode(
     status: "LeafNew",
   };
 
+  for (const worktree of Object.values(state.worktrees)) {
+    if (worktree.status === "current") worktree.status = "other";
+  }
+
   state.nodes[mergeNode.id] = mergeNode;
   state.worktrees[input.worktreeId] = {
     id: input.worktreeId,
     path: input.worktreePath,
     branch: input.branchName,
     currentNodeId: mergeNode.id,
-    status: "other",
+    status: "current",
   };
 
   for (const node of leaves) {
@@ -278,6 +489,7 @@ export function createMergeNode(
   }
 
   state.currentNodeId = mergeNode.id;
+  state.currentWorktreeId = mergeNode.git.worktreeId;
   assertGraphInvariants(state);
   return mergeNode;
 }
@@ -298,31 +510,21 @@ export function deleteLeafNode(
   const now = input.now ?? new Date().toISOString();
   const primaryParent = getNode(state, node.parents[0]!);
   const deletedWorktreeId = node.git.worktreeId;
+  const deletedParentIds = [...node.parents];
 
   for (const parentId of node.parents) {
     const parent = getNode(state, parentId);
     parent.children = parent.children.filter((childId) => childId !== node.id);
     parent.updatedAt = now;
-    if (parent.children.length === 0) {
-      parent.type = "leaf";
-      parent.status = parent.cc.sessionId ? "LeafResumable" : "LeafNew";
-      parent.locked = false;
-      parent.jobId = null;
-      parent.error = null;
-      parent.cc.processId = null;
-      parent.cc.resumeMode = parent.cc.sessionId ? "resume" : "new";
-    }
   }
 
   delete state.nodes[node.id];
 
-  const focusId = chooseFocusAfterDelete(state, primaryParent.id);
-  const deletedWorktreeStillUsed = Object.values(state.nodes).some(
-    (candidate) => candidate.git.worktreeId === deletedWorktreeId,
-  );
-  if (!deletedWorktreeStillUsed && deletedWorktreeId !== "wt_main") {
-    delete state.worktrees[deletedWorktreeId];
-  }
+  const pruneResult = pruneEmptyAncestors(state, deletedParentIds, now);
+  normalizeChildlessParents(state, [...deletedParentIds, ...pruneResult.touchedParentIds], now);
+  removeUnusedWorktrees(state, deletedWorktreeId);
+
+  const focusId = chooseFocusAfterDelete(state, pruneResult.nearestRemainingAncestorId ?? primaryParent.id);
 
   const focusNode = getNode(state, focusId);
   const focusWorktree = getWorktree(state, focusNode.git.worktreeId);
@@ -394,11 +596,26 @@ export function normalizeAfterBoot(state: CcflowState): void {
       node.status = node.cc.sessionId ? "LeafResumable" : "LeafNew";
       node.cc.resumeMode = node.cc.sessionId ? "resume" : "new";
     }
-    if (node.locked || node.status === "Committing" || node.status === "MergeRunning" || node.status === "Deleting") {
+    if (
+      node.locked ||
+      node.status === "Committing" ||
+      node.status === "ParentCommitting" ||
+      node.status === "AwaitingParentCommit" ||
+      node.status === "MergeRunning" ||
+      node.status === "Branching" ||
+      node.status === "Deleting"
+    ) {
       node.locked = false;
-      node.status = "JobFailed";
+      node.status = node.status === "AwaitingParentCommit" ? "ParentCommitFailed" : "JobFailed";
       node.error = "Job was interrupted because ccflow exited.";
+      node.blockedReason = "Interrupted job requires retry, repair, or deletion.";
+      node.pendingParentJobId = null;
+      node.jobId = null;
     }
+  }
+  for (const worktree of Object.values(state.worktrees)) {
+    worktree.locked = false;
+    if (worktree.status === "locked") worktree.status = worktree.id === state.currentWorktreeId ? "current" : "other";
   }
 }
 
@@ -411,8 +628,40 @@ export function assertGraphInvariants(state: CcflowState): void {
     if (node.children.length > 0 && node.type !== "internal") {
       throw new Error(`Node with children must be internal: ${node.id}`);
     }
-    if (node.type === "internal" && node.status !== "sealed" && node.status !== "Branching") {
+    if (
+      node.type === "internal" &&
+      node.status !== "sealed" &&
+      node.status !== "Branching" &&
+      node.status !== "ParentCommitting" &&
+      node.status !== "ParentCommitFailed" &&
+      node.status !== "JobFailed"
+    ) {
       throw new Error(`Internal node must be sealed or branching: ${node.id}`);
+    }
+    if (node.status === "AwaitingParentCommit" && !node.pendingParentJobId) {
+      throw new Error(`Pending child must reference a parent job: ${node.id}`);
+    }
+    if (node.pendingParentJobId) {
+      const parent = node.parents.map((parentId) => state.nodes[parentId]).find(Boolean);
+      if (!parent || parent.jobId !== node.pendingParentJobId) {
+        throw new Error(`Pending child references missing parent job: ${node.id}`);
+      }
+    }
+    if (node.status === "ParentCommitting" && (!node.jobId || !node.locked)) {
+      throw new Error(`Parent commit node must be locked and reference a job: ${node.id}`);
+    }
+    if (
+      node.locked &&
+      !node.jobId &&
+      !node.pendingParentJobId &&
+      node.status !== "Deleting" &&
+      node.status !== "MergeConflict" &&
+      node.status !== "ParentCommitFailed"
+    ) {
+      throw new Error(`Locked node must reference a job: ${node.id}`);
+    }
+    if (isMergeResultNode(node) && node.parents.length < 2) {
+      throw new Error(`Merge result must have at least two parents: ${node.id}`);
     }
     if (node.status === "LeafResumable" && !node.cc.sessionId) {
       throw new Error(`Resumable node must have a Claude session id: ${node.id}`);
@@ -445,6 +694,14 @@ export function assertGraphInvariants(state: CcflowState): void {
     if (!state.nodes[worktree.currentNodeId]) {
       throw new Error(`Worktree references missing current node: ${worktree.id}`);
     }
+    const currentNode = state.nodes[worktree.currentNodeId]!;
+    if (currentNode.git.worktreeId !== worktree.id) {
+      throw new Error(`Worktree current node belongs to another worktree: ${worktree.id}`);
+    }
+    if (worktree.locked) {
+      const owner = Object.values(state.nodes).find((node) => node.git.worktreeId === worktree.id && node.locked);
+      if (!owner) throw new Error(`Locked worktree has no locked node owner: ${worktree.id}`);
+    }
   }
 }
 
@@ -453,10 +710,84 @@ export function firstLine(value: string): string {
 }
 
 function chooseFocusAfterDelete(state: CcflowState, parentId: string): string {
-  const parent = getNode(state, parentId);
-  if (isLeafNode(state, parent.id)) return parent.id;
-  for (const childId of parent.children) {
-    if (isLeafNode(state, childId)) return childId;
+  const parent = state.nodes[parentId];
+  if (parent && isSafeFocusTarget(state, parent.id) && isLeafNode(state, parent.id)) return parent.id;
+  if (parent) {
+    for (const childId of parent.children) {
+      if (isSafeFocusTarget(state, childId) && isLeafNode(state, childId)) return childId;
+    }
   }
-  return parent.id;
+  for (const node of Object.values(state.nodes)) {
+    if (node.git.worktreeId === state.currentWorktreeId && isSafeFocusTarget(state, node.id) && isLeafNode(state, node.id)) return node.id;
+  }
+  for (const node of Object.values(state.nodes)) {
+    if (isSafeFocusTarget(state, node.id) && isLeafNode(state, node.id)) return node.id;
+  }
+  return state.currentNodeId;
+}
+
+function pruneEmptyAncestors(
+  state: CcflowState,
+  parentIds: string[],
+  now: string,
+): { nearestRemainingAncestorId: string | null; touchedParentIds: string[] } {
+  let nearestRemainingAncestorId: string | null = null;
+  const touchedParentIds: string[] = [];
+  const queue = [...parentIds];
+  const seen = new Set<string>();
+  while (queue.length > 0) {
+    const nodeId = queue.shift()!;
+    if (seen.has(nodeId)) continue;
+    seen.add(nodeId);
+    const node = state.nodes[nodeId];
+    if (!node) continue;
+    if (!isPrunableEmptyNode(state, node.id)) {
+      nearestRemainingAncestorId ??= node.id;
+      continue;
+    }
+    const nextParents = [...node.parents];
+    for (const parentId of nextParents) {
+      const parent = state.nodes[parentId];
+      if (!parent) continue;
+      parent.children = parent.children.filter((childId) => childId !== node.id);
+      parent.updatedAt = now;
+      touchedParentIds.push(parent.id);
+      queue.push(parent.id);
+    }
+    delete state.nodes[node.id];
+  }
+  return { nearestRemainingAncestorId, touchedParentIds };
+}
+
+function normalizeChildlessParents(state: CcflowState, candidateIds: string[], now: string): void {
+  const queue = [...candidateIds];
+  const seen = new Set<string>();
+  while (queue.length > 0) {
+    const nodeId = queue.shift()!;
+    if (seen.has(nodeId)) continue;
+    seen.add(nodeId);
+    const node = state.nodes[nodeId];
+    if (!node) continue;
+    queue.push(...node.parents);
+    if (node.children.length !== 0 || node.type !== "internal") continue;
+    node.type = "leaf";
+    node.status = node.cc.sessionId ? "LeafResumable" : "LeafNew";
+    node.locked = false;
+    node.jobId = null;
+    node.error = null;
+    node.blockedReason = null;
+    node.pendingParentJobId = null;
+    node.cc.processId = null;
+    node.cc.resumeMode = node.cc.sessionId ? "resume" : "new";
+    node.updatedAt = now;
+  }
+}
+
+function removeUnusedWorktrees(state: CcflowState, preferredWorktreeId?: string): void {
+  const used = new Set(Object.values(state.nodes).map((node) => node.git.worktreeId));
+  const ids = preferredWorktreeId ? [preferredWorktreeId, ...Object.keys(state.worktrees)] : Object.keys(state.worktrees);
+  for (const worktreeId of ids) {
+    if (worktreeId === "wt_main") continue;
+    if (!used.has(worktreeId)) delete state.worktrees[worktreeId];
+  }
 }
