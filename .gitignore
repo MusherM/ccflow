@@ -41,3 +41,11 @@ npm-debug.log*
 # 测试覆盖
 coverage/
 .nyc_output/
+
+# 实验性原型和临时工作目录
+.antigravitycli/
+.claude/
+.codex/
+openspec/
+prototypes/
+scratch/
