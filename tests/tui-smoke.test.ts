@@ -5,10 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { GitAdapter } from "../src/core/git.js";
-import { createPendingChildFromLeaf } from "../src/core/graph.js";
+import { createPendingChildFromLeaf, sealLeafAndCreateChild } from "../src/core/graph.js";
 import { JobRunner } from "../src/core/jobs.js";
 import { loadOrInitState, saveState, statePath } from "../src/core/storage.js";
-import type { CcflowState } from "../src/core/types.js";
+import { emptyStats, type CcflowState } from "../src/core/types.js";
 import { claudeCliConfig, requirePython3, withClaudeSettingsSnapshot } from "./helpers/claude-cli.js";
 
 test("TUI delete key removes the current latest leaf and preserves one current worktree", async () => {
@@ -115,6 +115,55 @@ test("TUI shows blocked state instead of entering a pending child", () => {
   const finalState = JSON.parse(fs.readFileSync(statePath(repoRoot), "utf8")) as CcflowState;
   assert.equal(finalState.currentNodeId, child.id);
   assert.equal(finalState.nodes[child.id]?.status, "ParentCommitFailed");
+});
+
+test("TUI persists graph focus and pans the viewport to the focused node", () => {
+  requirePython3();
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-tui-viewport-"));
+  const git = new GitAdapter();
+  git.ensureRepo(repoRoot);
+  fs.writeFileSync(path.join(repoRoot, "README.md"), "initial\n");
+  git.commit(repoRoot, "test: initial readme");
+  const state = loadOrInitState({
+    repoRoot,
+    branch: git.currentBranch(repoRoot),
+    commitHash: git.currentCommit(repoRoot),
+  });
+  const rootId = state.currentNodeId;
+  let leafId = rootId;
+
+  for (let index = 1; index <= 6; index += 1) {
+    const child = sealLeafAndCreateChild(state, {
+      leafId,
+      commitHash: `commit_${index}`,
+      commitMessage: `step ${index}`,
+      sessionId: null,
+      stats: emptyStats(),
+      now: `2026-05-22T00:00:${String(index).padStart(2, "0")}.000Z`,
+      idFactory: () => `node_${index}`,
+    });
+    leafId = child.id;
+  }
+  state.ui = {
+    focusNodeId: rootId,
+    graphViewport: { x: 0, y: 0 },
+  };
+  saveState(state);
+
+  const result = runTuiPty(repoRoot, [
+    { sequence: "l", delay: 0.1 },
+    { sequence: "l", delay: 0.1 },
+    { sequence: "l", delay: 0.1 },
+    { sequence: "l", delay: 0.1 },
+    { sequence: "l", delay: 0.1 },
+    { sequence: "l", delay: 0.1 },
+    { sequence: "q", delay: 0.5 },
+  ]);
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const finalState = JSON.parse(fs.readFileSync(statePath(repoRoot), "utf8")) as CcflowState;
+  assert.equal(finalState.ui?.focusNodeId, leafId);
+  assert.ok((finalState.ui?.graphViewport?.x ?? 0) > 0);
 });
 
 function runTuiPty(

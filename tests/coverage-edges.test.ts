@@ -249,8 +249,10 @@ test("job runner covers clean sibling creation and failure state restoration", a
   assert.equal(plan.requiresName, false);
   assert.equal(plan.defaultBranch, sibling.git.branch);
   await assert.rejects(() => runner.createSiblingNode(state, sibling.id, "Feature Branch"), /already exists/);
-  const existingBranchSibling = await runner.createSiblingNode(state, sibling.id, { kind: "existing", branch: sibling.git.branch });
-  assert.equal(existingBranchSibling.git.worktreeId, sibling.git.worktreeId);
+  await assert.rejects(
+    () => runner.createSiblingNode(state, sibling.id, { kind: "existing", branch: sibling.git.branch }),
+    /already has child/,
+  );
 
   const noBase = createInitialState({ repoRoot, branch: "main", commitHash: "base", idFactory: (prefix) => `${prefix}_root` });
   const noBaseChild = sealLeafAndCreateChild(noBase, {
@@ -391,6 +393,84 @@ test("job runner records a headless merge resolution when conflicts are resolved
   assert.ok(merge.git.commitHash);
   assert.equal(git.conflictFiles(state.worktrees[merge.git.worktreeId]!.path).length, 0);
   assert.equal(git.hasDirtyChanges(state.worktrees[merge.git.worktreeId]!.path), false);
+});
+
+test("job runner deletes a merge result and then its sibling input", async () => {
+  const { state, repoRoot } = createRepoState();
+  const git = new GitAdapter();
+  const runner = new JobRunner(git);
+  const root = getNode(state, state.currentNodeId);
+  const mainLeaf = await runner.createNextNode(state, root.id);
+  const sibling = createCommittedSibling(state, repoRoot, root.id, "delete-after-merge", {
+    fileName: "feature.txt",
+    content: "feature\n",
+    message: "feat: feature",
+  });
+
+  fs.writeFileSync(path.join(repoRoot, "main.txt"), "main\n");
+  mainLeaf.git.commitHash = git.commit(repoRoot, "feat: main");
+  mainLeaf.title = "feat: main";
+
+  const merge = await runner.mergeLeaves(state, [mainLeaf.id, sibling.id]);
+  const mergeFocus = await runner.deleteLeaf(state, merge.id);
+
+  assert.equal(state.nodes[merge.id], undefined);
+  assert.equal(mergeFocus.id, mainLeaf.id);
+  assert.equal(getNode(state, sibling.id).type, "leaf");
+
+  const siblingFocus = await runner.deleteLeaf(state, sibling.id);
+
+  assert.equal(state.nodes[sibling.id], undefined);
+  assert.equal(state.worktrees[sibling.git.worktreeId], undefined);
+  assert.equal(siblingFocus.id, mainLeaf.id);
+  assertGraphInvariants(state);
+});
+
+test("job runner can delete sibling and merge nodes whose auxiliary worktrees are missing", async () => {
+  const missingSibling = createRepoState();
+  const git = new GitAdapter();
+  const runner = new JobRunner(git);
+  const missingSiblingRoot = getNode(missingSibling.state, missingSibling.state.currentNodeId);
+  const sibling = createCommittedSibling(missingSibling.state, missingSibling.repoRoot, missingSiblingRoot.id, "missing-sibling", {
+    fileName: "sibling.txt",
+    content: "sibling\n",
+    message: "feat: sibling",
+  });
+
+  fs.rmSync(getWorktree(missingSibling.state, sibling.git.worktreeId).path, { recursive: true, force: true });
+
+  const siblingFocus = await runner.deleteLeaf(missingSibling.state, sibling.id);
+
+  assert.equal(missingSibling.state.nodes[sibling.id], undefined);
+  assert.equal(missingSibling.state.worktrees[sibling.git.worktreeId], undefined);
+  assert.equal(siblingFocus.id, missingSiblingRoot.id);
+  assertGraphInvariants(missingSibling.state);
+
+  const missingMerge = createRepoState();
+  const missingMergeRoot = getNode(missingMerge.state, missingMerge.state.currentNodeId);
+  const one = createCommittedSibling(missingMerge.state, missingMerge.repoRoot, missingMergeRoot.id, "missing-merge-one", {
+    fileName: "one.txt",
+    content: "one\n",
+    message: "feat: one",
+  });
+  const two = createCommittedSibling(missingMerge.state, missingMerge.repoRoot, missingMergeRoot.id, "missing-merge-two", {
+    fileName: "two.txt",
+    content: "two\n",
+    message: "feat: two",
+  });
+  const merge = await runner.mergeLeaves(missingMerge.state, [one.id, two.id]);
+  const mergeWorktree = getWorktree(missingMerge.state, merge.git.worktreeId);
+
+  fs.rmSync(mergeWorktree.path, { recursive: true, force: true });
+
+  const mergeFocus = await runner.deleteLeaf(missingMerge.state, merge.id);
+
+  assert.equal(missingMerge.state.nodes[merge.id], undefined);
+  assert.equal(missingMerge.state.worktrees[merge.git.worktreeId], undefined);
+  assert.equal(mergeFocus.id, one.id);
+  assert.equal(getNode(missingMerge.state, one.id).type, "leaf");
+  assert.equal(getNode(missingMerge.state, two.id).type, "leaf");
+  assertGraphInvariants(missingMerge.state);
 });
 
 function createRepo(): string {

@@ -8,10 +8,20 @@ import {
 } from "@opentui/core";
 import { ClaudeAdapter } from "./core/claude.js";
 import { GitAdapter } from "./core/git.js";
-import { getNode, getWorktree, isEditableLeaf, isLeafNode, isOperationBlockedNode, switchCurrentWorktree } from "./core/graph.js";
+import { getNode, getWorktree, isEditableLeaf, isLeafNode, isOperationBlockedNode, isSafeFocusTarget, switchCurrentWorktree } from "./core/graph.js";
 import { JobRunner } from "./core/jobs.js";
 import { saveSession, saveState } from "./core/storage.js";
 import { quarantineTerminalInput, releaseStdinForChildProcess, resetTerminalForChildProcess } from "./core/terminal.js";
+import {
+  buildEdgeLayer,
+  chooseExistingFocusId,
+  ensureNodeVisible,
+  layoutGraph,
+  projectVisiblePositions,
+  rankNodes,
+  sanitizeGraphViewport,
+  type GraphViewport,
+} from "./core/tui-layout.js";
 import type { CcflowNode, CcflowState } from "./core/types.js";
 
 type Direction = "left" | "right" | "up" | "down";
@@ -30,6 +40,7 @@ interface UiState {
   message: string;
   task: string | null;
   busy: boolean;
+  graphViewport: GraphViewport;
   inputMode: InputMode | null;
   inputValue: string;
 }
@@ -39,30 +50,11 @@ interface TuiExit {
   nodeId?: string;
 }
 
-interface PositionedNode {
-  node: CcflowNode;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  lane: number;
-  row: number;
-}
-
 export async function runCcflowTui(state: CcflowState): Promise<void> {
   const git = new GitAdapter();
   const claude = new ClaudeAdapter();
   const jobs = new JobRunner(git, claude);
-  const ui: UiState = {
-    focusId: state.currentNodeId,
-    selectedIds: new Set(),
-    mode: "graph",
-    message: "",
-    task: null,
-    busy: false,
-    inputMode: null,
-    inputValue: "",
-  };
+  const ui = createInitialUiState(state);
 
   while (true) {
     refreshDirtyStatuses(state, git);
@@ -72,6 +64,27 @@ export async function runCcflowTui(state: CcflowState): Promise<void> {
       await enterLeaf(state, exit.nodeId, claude, ui);
     }
   }
+}
+
+function createInitialUiState(state: CcflowState): UiState {
+  return {
+    focusId: chooseExistingFocusId(state, state.ui?.focusNodeId),
+    selectedIds: new Set(),
+    mode: "graph",
+    message: "",
+    task: null,
+    busy: false,
+    graphViewport: sanitizeGraphViewport(state.ui?.graphViewport),
+    inputMode: null,
+    inputValue: "",
+  };
+}
+
+function persistUiPreferences(state: CcflowState, ui: UiState): void {
+  state.ui = {
+    focusNodeId: chooseExistingFocusId(state, ui.focusId),
+    graphViewport: sanitizeGraphViewport(ui.graphViewport),
+  };
 }
 
 async function runGraphOnce(
@@ -124,6 +137,10 @@ async function runGraphOnce(
   });
 
   const rerender = () => renderApp(renderer, state, ui);
+  const persistAndSaveState = () => {
+    persistUiPreferences(state, ui);
+    saveState(state);
+  };
   const runAction = async (label: string, action: () => Promise<void> | void) => {
     if (ui.busy) return;
     ui.busy = true;
@@ -133,7 +150,7 @@ async function runGraphOnce(
     try {
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
       await action();
-      saveState(state);
+      persistAndSaveState();
     } catch (error) {
       ui.message = error instanceof Error ? error.message : String(error);
     } finally {
@@ -180,7 +197,7 @@ async function runGraphOnce(
 
     const direction = keyToDirection(key);
     if (direction && ui.mode === "graph") {
-      ui.focusId = moveFocus(state, ui.focusId, direction);
+      ui.focusId = moveFocus(state, ensureUiFocus(state, ui).id, direction);
       rerender();
       key.preventDefault();
       return;
@@ -188,7 +205,7 @@ async function runGraphOnce(
     if (ui.busy) return;
 
     if (key.name === "return" || key.name === "enter") {
-      const node = getNode(state, ui.focusId);
+      const node = ensureUiFocus(state, ui);
       if (!isLeafNode(state, node.id)) {
         ui.mode = "detail";
         rerender();
@@ -199,6 +216,7 @@ async function runGraphOnce(
         rerender();
         return;
       }
+      persistAndSaveState();
       settle({ kind: "enter", nodeId: node.id });
       return;
     }
@@ -211,13 +229,13 @@ async function runGraphOnce(
     }
 
     if (key.sequence === "q") {
-      saveState(state);
+      persistAndSaveState();
       settle({ kind: "quit" });
       return;
     }
 
     if (isShiftTab(key)) {
-      const plan = jobs.branchCreationPlan(state, ui.focusId);
+      const plan = jobs.branchCreationPlan(state, ensureUiFocus(state, ui).id);
       const choices = plan.branches.map((branch, index) => `${index + 1}:${branch}`).join("  ");
       ui.inputMode = {
         prompt: plan.requiresName
@@ -225,7 +243,7 @@ async function runGraphOnce(
           : `Branch (${choices}  new:<name>): `,
         onConfirm: (value: string) => {
           void runAction("creating sibling...", async () => {
-            const sibling = await jobs.createSiblingNode(state, ui.focusId, parseBranchTarget(value, plan));
+            const sibling = await jobs.createSiblingNode(state, ensureUiFocus(state, ui).id, parseBranchTarget(value, plan));
             ui.focusId = sibling.id;
             ui.selectedIds.clear();
             ui.mode = "graph";
@@ -234,7 +252,7 @@ async function runGraphOnce(
         },
         onCancel: () => {
           void runAction("creating sibling...", async () => {
-            const sibling = await jobs.createSiblingNode(state, ui.focusId, plan.defaultBranch ? { kind: "existing", branch: plan.defaultBranch } : undefined);
+            const sibling = await jobs.createSiblingNode(state, ensureUiFocus(state, ui).id, plan.defaultBranch ? { kind: "existing", branch: plan.defaultBranch } : undefined);
             ui.focusId = sibling.id;
             ui.selectedIds.clear();
             ui.mode = "graph";
@@ -250,7 +268,7 @@ async function runGraphOnce(
 
     if (isTab(key)) {
       void runAction("creating next node...", async () => {
-        const child = await jobs.createNextNode(state, ui.focusId);
+        const child = await jobs.createNextNode(state, ensureUiFocus(state, ui).id);
         ui.focusId = child.id;
         ui.selectedIds.clear();
         ui.mode = "graph";
@@ -262,7 +280,7 @@ async function runGraphOnce(
 
     if (key.sequence === "d") {
       void runAction("deleting leaf... resetting worktree...", async () => {
-        const focus = await jobs.deleteLeaf(state, ui.focusId);
+        const focus = await jobs.deleteLeaf(state, ensureUiFocus(state, ui).id);
         ui.focusId = focus.id;
         ui.selectedIds.delete(ui.focusId);
         ui.selectedIds.clear();
@@ -273,7 +291,7 @@ async function runGraphOnce(
     }
 
     if (key.name === "space" || key.sequence === " ") {
-      const node = getNode(state, ui.focusId);
+      const node = ensureUiFocus(state, ui);
       if (isLeafNode(state, node.id)) {
         if (ui.selectedIds.has(node.id)) ui.selectedIds.delete(node.id);
         else ui.selectedIds.add(node.id);
@@ -284,11 +302,11 @@ async function runGraphOnce(
 
     if (key.sequence === "s") {
       void runAction("Switching worktree", () => {
-        if (isOperationBlockedNode(state, ui.focusId)) {
-          const node = getNode(state, ui.focusId);
+        const node = ensureUiFocus(state, ui);
+        if (isOperationBlockedNode(state, node.id)) {
           throw new Error(node.blockedReason || node.error || `Node is blocked: ${node.status}`);
         }
-        const worktree = switchCurrentWorktree(state, ui.focusId);
+        const worktree = switchCurrentWorktree(state, node.id);
         ui.message = `Current worktree: ${worktree.path}`;
       });
       return;
@@ -328,6 +346,11 @@ async function runGraphOnce(
   renderer.on("resize", rerender);
   renderer.on("destroy", () => {
     if (!settled) {
+      try {
+        persistAndSaveState();
+      } catch {
+        // The destroy path must still resolve even if the graph was already torn down.
+      }
       settled = true;
       resolve({ kind: "quit" });
     }
@@ -406,7 +429,7 @@ function renderApp(renderer: CliRenderer, state: CcflowState, ui: UiState): void
   const compact = width < 116;
   const graphWidth = compact ? Math.max(70, width - 2) : Math.max(70, width - 40);
   const graphHeight = Math.max(19, height - 7);
-  const focusNode = getNode(state, ui.focusId);
+  const focusNode = ensureUiFocus(state, ui);
 
   renderer.root.add(
     Box(
@@ -427,7 +450,7 @@ function renderApp(renderer: CliRenderer, state: CcflowState, ui: UiState): void
           paddingTop: 1,
           gap: 1,
         },
-        ui.mode === "detail" ? detailPanel(state, focusNode, graphWidth, graphHeight) : graphPanel(state, ui, graphWidth, graphHeight),
+        ui.mode === "detail" ? detailPanel(state, focusNode, graphWidth, graphHeight) : graphPanel(state, ui, focusNode, graphWidth, graphHeight),
         compact ? compactSummary(state, focusNode, ui) : sidePanel(state, focusNode, ui),
       ),
       footer(ui),
@@ -435,6 +458,26 @@ function renderApp(renderer: CliRenderer, state: CcflowState, ui: UiState): void
   );
 
   renderer.requestRender();
+}
+
+function ensureUiFocus(state: CcflowState, ui: UiState): CcflowNode {
+  for (const selectedId of [...ui.selectedIds]) {
+    if (!state.nodes[selectedId]) ui.selectedIds.delete(selectedId);
+  }
+
+  const existing = state.nodes[ui.focusId];
+  if (existing) return existing;
+
+  const fallback =
+    state.nodes[state.currentNodeId] ??
+    Object.values(state.nodes).find((node) => isSafeFocusTarget(state, node.id)) ??
+    Object.values(state.nodes)[0];
+  if (!fallback) throw new Error("No nodes available to focus");
+
+  ui.focusId = fallback.id;
+  ui.mode = "graph";
+  ui.message = ui.message || `Focus moved to ${fallback.id}`;
+  return fallback;
 }
 
 function restoreEnvValue(name: string, value: string | undefined): void {
@@ -468,9 +511,13 @@ function toolbar(state: CcflowState, ui: UiState) {
   );
 }
 
-function graphPanel(state: CcflowState, ui: UiState, width: number, height: number) {
-  const positions = layoutGraph(state, width - 2, height - 2);
-  const edgeLayer = buildEdgeLayer(state, positions, width - 2, height - 2);
+function graphPanel(state: CcflowState, ui: UiState, focusNode: CcflowNode, width: number, height: number) {
+  const canvasWidth = width - 2;
+  const canvasHeight = height - 2;
+  const positions = layoutGraph(state);
+  ui.graphViewport = ensureNodeVisible(ui.graphViewport, positions, focusNode.id, canvasWidth, canvasHeight);
+  const edgeLayer = buildEdgeLayer(state, positions, canvasWidth, canvasHeight, ui.graphViewport);
+  const visiblePositions = projectVisiblePositions(positions, ui.graphViewport, canvasWidth, canvasHeight);
 
   return Box(
     {
@@ -489,10 +536,10 @@ function graphPanel(state: CcflowState, ui: UiState, width: number, height: numb
       position: "absolute",
       left: 1,
       top: 1,
-      width: width - 2,
-      height: height - 2,
+      width: canvasWidth,
+      height: canvasHeight,
     }),
-    ...positions.map((pos) =>
+    ...visiblePositions.map((pos) =>
       nodeCard(state, pos.node, pos.x + 1, pos.y + 1, pos.width, ui.focusId === pos.node.id, ui.selectedIds.has(pos.node.id)),
     ),
   );
@@ -736,101 +783,6 @@ function moveFocus(state: CcflowState, currentId: string, direction: Direction):
     })
     .sort((a, b) => a.score - b.score || a.id.localeCompare(b.id));
   return candidates[0]?.id ?? currentId;
-}
-
-function layoutGraph(state: CcflowState, width: number, height: number): PositionedNode[] {
-  const ranked = rankNodes(state);
-  const maxLane = Math.max(0, ...[...ranked.values()].map((rank) => rank.lane));
-  const maxRowsByLane = new Map<number, number>();
-  for (const rank of ranked.values()) {
-    maxRowsByLane.set(rank.lane, Math.max(maxRowsByLane.get(rank.lane) ?? 0, rank.row));
-  }
-
-  const nodeWidth = Math.max(18, Math.min(28, Math.floor((width - 4) / Math.max(1, maxLane + 1)) - 2));
-  const nodeHeight = 6;
-  const maxX = Math.max(1, width - nodeWidth - 2);
-  const maxY = Math.max(1, height - nodeHeight - 2);
-  return Object.values(state.nodes)
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
-    .map((node) => {
-      const rank = ranked.get(node.id) ?? { lane: 0, row: 0 };
-      const rowCount = (maxRowsByLane.get(rank.lane) ?? 0) + 1;
-      return {
-        node,
-        x: Math.round(maxLane === 0 ? 1 : (maxX * rank.lane) / maxLane),
-        y: Math.round(rowCount <= 1 ? maxY / 2 : (maxY * rank.row) / (rowCount - 1)),
-        width: nodeWidth,
-        height: nodeHeight,
-        lane: rank.lane,
-        row: rank.row,
-      };
-    });
-}
-
-function rankNodes(state: CcflowState): Map<string, { lane: number; row: number }> {
-  const nodes = Object.values(state.nodes).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-  const depthCache = new Map<string, number>();
-  const depthOf = (node: CcflowNode): number => {
-    const cached = depthCache.get(node.id);
-    if (cached !== undefined) return cached;
-    const depth = node.parents.length
-      ? Math.max(...node.parents.map((parentId) => depthOf(getNode(state, parentId)))) + 1
-      : 0;
-    depthCache.set(node.id, depth);
-    return depth;
-  };
-  const byLane = new Map<number, CcflowNode[]>();
-  for (const node of nodes) {
-    const lane = depthOf(node);
-    const laneNodes = byLane.get(lane) ?? [];
-    laneNodes.push(node);
-    byLane.set(lane, laneNodes);
-  }
-  const ranked = new Map<string, { lane: number; row: number }>();
-  for (const [lane, laneNodes] of byLane) {
-    laneNodes.forEach((node, row) => ranked.set(node.id, { lane, row }));
-  }
-  return ranked;
-}
-
-function buildEdgeLayer(state: CcflowState, positions: PositionedNode[], width: number, height: number): string {
-  const cells = Array.from({ length: height }, () => Array.from({ length: width }, () => " "));
-  const byId = new Map(positions.map((position) => [position.node.id, position]));
-  for (const node of Object.values(state.nodes)) {
-    const from = byId.get(node.id);
-    if (!from) continue;
-    for (const childId of node.children) {
-      const to = byId.get(childId);
-      if (!to) continue;
-      drawEdge(cells, from, to);
-    }
-  }
-  return cells.map((row) => row.join("")).join("\n");
-}
-
-function drawEdge(cells: string[][], from: PositionedNode, to: PositionedNode): void {
-  const startX = from.x + from.width;
-  const startY = from.y + Math.floor(from.height / 2);
-  const endX = to.x - 1;
-  const endY = to.y + Math.floor(to.height / 2);
-  const midX = Math.max(startX + 1, Math.floor((startX + endX) / 2));
-  drawHorizontal(cells, startX, midX, startY);
-  drawVertical(cells, midX, startY, endY);
-  drawHorizontal(cells, midX, endX, endY);
-  setCell(cells, endX, endY, ">");
-}
-
-function drawHorizontal(cells: string[][], x1: number, x2: number, y: number): void {
-  for (let x = Math.min(x1, x2); x <= Math.max(x1, x2); x += 1) setCell(cells, x, y, "-");
-}
-
-function drawVertical(cells: string[][], x: number, y1: number, y2: number): void {
-  for (let y = Math.min(y1, y2); y <= Math.max(y1, y2); y += 1) setCell(cells, x, y, "|");
-}
-
-function setCell(cells: string[][], x: number, y: number, value: string): void {
-  if (y < 0 || y >= cells.length || x < 0 || x >= cells[y].length) return;
-  cells[y][x] = value;
 }
 
 function nodeAccent(state: CcflowState, node: CcflowNode): string {

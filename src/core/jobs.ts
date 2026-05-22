@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { ClaudeAdapter } from "./claude.js";
 import { GitAdapter, isDefaultBranch, mergeBranchName, slug, worktreeIdFromBranch, worktreePathForBranch } from "./git.js";
 import {
+  assertCanAddChildOnBranch,
   branchFromNode,
   createPendingChildFromLeaf,
   createMergeNode,
@@ -263,15 +265,6 @@ export class JobRunner {
     }
     ensureCommitReady(state, node.id);
 
-    if (isLeafNode(state, node.id)) {
-      const result = await this.commitLeaf(state, node.id);
-      if (!result.success || !result.commitHash) throw new Error(result.error ?? "Commit failed before sibling creation");
-      node.git.commitHash = result.commitHash;
-      node.title = firstLine(result.commitMessage ?? node.title);
-      node.stats = result.summary ?? node.stats;
-      saveSession(state.repoRoot, node);
-    }
-
     const parent = getNode(state, node.parents[0]!);
     const baseCommit = parent.git.commitHash ?? nearestAncestorCommit(state, node.parents[0]!)?.commitHash;
     if (!baseCommit) throw new Error("Cannot create sibling because no ancestor commit exists");
@@ -283,6 +276,17 @@ export class JobRunner {
     const branch = targetChoice.kind === "existing"
       ? targetChoice.branch
       : this.normalizeNewBranchName(state, targetChoice.name);
+    assertCanAddChildOnBranch(state, parent.id, branch);
+
+    if (isLeafNode(state, node.id)) {
+      const result = await this.commitLeaf(state, node.id);
+      if (!result.success || !result.commitHash) throw new Error(result.error ?? "Commit failed before sibling creation");
+      node.git.commitHash = result.commitHash;
+      node.title = firstLine(result.commitMessage ?? node.title);
+      node.stats = result.summary ?? node.stats;
+      saveSession(state.repoRoot, node);
+    }
+
     const worktreePath = worktreePathForBranch(state.repoRoot, branch);
     const existingWorktree = state.worktrees[worktreeIdFromBranch(branch)];
     if (!existingWorktree) {
@@ -330,7 +334,7 @@ export class JobRunner {
     saveState(state);
 
     try {
-      if (resetTarget) {
+      if (resetTarget && fs.existsSync(worktree.path)) {
         logEvent(state.repoRoot, "delete-leaf:reset-hard", {
           nodeId: node.id,
           worktreePath: worktree.path,
@@ -338,6 +342,13 @@ export class JobRunner {
           commitNodeId: resetTarget.nodeId,
         });
         this.git.resetHard(worktree.path, resetTarget.commitHash);
+      } else if (resetTarget) {
+        logEvent(state.repoRoot, "delete-leaf:missing-worktree-skip-reset", {
+          nodeId: node.id,
+          worktreePath: worktree.path,
+          commitHash: resetTarget.commitHash,
+          commitNodeId: resetTarget.nodeId,
+        });
       } else {
         logEvent(state.repoRoot, "delete-leaf:no-reset-target", {
           nodeId: node.id,

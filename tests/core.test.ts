@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  assertCanAddChildOnBranch,
   assertGraphInvariants,
   branchFromNode,
   createPendingChildFromLeaf,
@@ -96,6 +97,56 @@ test("branching from a historical node creates a new worktree-backed leaf", () =
   assert.equal(branch.git.worktreeId, "wt_feature");
   assert.equal(state.worktrees.wt_feature?.path, "/repo/.worktrees/feature");
   assert.equal(state.nodes.node_root?.type, "internal");
+  assertGraphInvariants(state);
+});
+
+test("graph rejects two direct children on the same branch from one parent", () => {
+  const state = createInitialState({
+    repoRoot: "/repo",
+    branch: "main",
+    commitHash: "abc123",
+    now: createdAt,
+    idFactory: (prefix) => `${prefix}_root`,
+  });
+  sealLeafAndCreateChild(state, {
+    leafId: "node_root",
+    commitHash: "def456",
+    commitMessage: "feat: base",
+    sessionId: null,
+    stats: { filesChanged: 1, insertions: 1, deletions: 0, symbolsChanged: [] },
+    now: "2026-05-18T10:10:00.000Z",
+    idFactory: (prefix) => `${prefix}_main`,
+  });
+
+  assert.throws(() => assertCanAddChildOnBranch(state, "node_root", "main"), /already has child/);
+  assert.throws(
+    () =>
+      branchFromNode(state, {
+        nodeId: "node_root",
+        worktreeId: "wt_second_main",
+        worktreePath: "/repo/.worktrees/second-main",
+        branchName: "main",
+        baseCommitHash: "def456",
+        now: "2026-05-18T10:20:00.000Z",
+        idFactory: (prefix) => `${prefix}_second_main`,
+      }),
+    /already has child/,
+  );
+  assert.deepEqual(state.nodes.node_root?.children, ["node_main"]);
+  assert.equal(state.nodes.node_second_main, undefined);
+  assert.equal(state.worktrees.wt_second_main, undefined);
+
+  const invalid = structuredClone(state);
+  invalid.nodes.node_duplicate = {
+    ...invalid.nodes.node_main!,
+    id: "node_duplicate",
+    parents: ["node_root"],
+    createdAt: "2026-05-18T10:30:00.000Z",
+    updatedAt: "2026-05-18T10:30:00.000Z",
+  };
+  invalid.nodes.node_root!.children.push("node_duplicate");
+
+  assert.throws(() => assertGraphInvariants(invalid), /multiple children on branch main/);
   assertGraphInvariants(state);
 });
 
@@ -369,6 +420,92 @@ test("deleting the last leaf preserves committed branch history", () => {
   assert.equal(state.nodes[branch.id]?.type, "leaf");
   assert.equal(state.nodes[branch.id]?.git.commitHash, "feature123");
   assert.equal(state.worktrees.wt_feature?.currentNodeId, branch.id);
+  assertGraphInvariants(state);
+});
+
+test("deleting a merge leaf keeps worktree current nodes in their own worktrees", () => {
+  const state = createInitialState({
+    repoRoot: "/repo",
+    branch: "main",
+    commitHash: "abc123",
+    now: createdAt,
+    idFactory: (prefix) => `${prefix}_root`,
+  });
+  const mainLeaf = sealLeafAndCreateChild(state, {
+    leafId: "node_root",
+    commitHash: "main123",
+    commitMessage: "feat: main",
+    sessionId: null,
+    stats: { filesChanged: 1, insertions: 1, deletions: 0, symbolsChanged: [] },
+    now: "2026-05-18T10:10:00.000Z",
+    idFactory: (prefix) => `${prefix}_main`,
+  });
+  mainLeaf.git.commitHash = "mainleaf123";
+  mainLeaf.title = "feat: main continuation";
+  const sibling = branchFromNode(state, {
+    nodeId: "node_root",
+    worktreeId: "wt_feature",
+    worktreePath: "/repo/.worktrees/feature",
+    branchName: "ccflow/feature",
+    baseCommitHash: "abc123",
+    now: "2026-05-18T10:20:00.000Z",
+    idFactory: (prefix) => `${prefix}_feature`,
+  });
+  sibling.git.commitHash = "feature123";
+  sibling.title = "feat: feature";
+
+  const merge = createMergeNode(state, {
+    nodeIds: [mainLeaf.id, sibling.id],
+    worktreeId: "wt_main",
+    worktreePath: "/repo",
+    branchName: "main",
+    commitHash: "merge123",
+    now: "2026-05-18T10:30:00.000Z",
+    idFactory: (prefix) => `${prefix}_merge`,
+  });
+
+  state.nodes.node_extra = {
+    id: "node_extra",
+    title: "Extra feature continuation",
+    type: "leaf",
+    parents: [mainLeaf.id],
+    children: [],
+    createdAt: "2026-05-18T10:40:00.000Z",
+    updatedAt: "2026-05-18T10:40:00.000Z",
+    git: {
+      commitHash: null,
+      branch: "ccflow/extra",
+      worktreeId: "wt_extra",
+    },
+    cc: {
+      sessionId: null,
+      processId: null,
+      resumeMode: "new",
+    },
+    stats: { filesChanged: 0, insertions: 0, deletions: 0, symbolsChanged: [] },
+    status: "LeafNew",
+  };
+  state.nodes[mainLeaf.id]!.children.push("node_extra");
+  state.worktrees.wt_extra = {
+    id: "wt_extra",
+    path: "/repo/.worktrees/extra",
+    branch: "ccflow/extra",
+    currentNodeId: "node_extra",
+    status: "other",
+  };
+  assertGraphInvariants(state);
+
+  const result = deleteLeafNode(state, {
+    nodeId: merge.id,
+    now: "2026-05-18T10:50:00.000Z",
+  });
+
+  assert.equal(state.nodes[merge.id], undefined);
+  assert.equal(result.focusId, mainLeaf.id);
+  assert.equal(state.currentNodeId, mainLeaf.id);
+  assert.equal(state.currentWorktreeId, "wt_main");
+  assert.equal(state.worktrees.wt_main?.currentNodeId, mainLeaf.id);
+  assert.equal(state.worktrees.wt_extra?.currentNodeId, "node_extra");
   assertGraphInvariants(state);
 });
 

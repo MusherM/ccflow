@@ -157,6 +157,14 @@ export function ensureCommitReady(state: CcflowState, nodeId: string): void {
   }
 }
 
+export function assertCanAddChildOnBranch(state: CcflowState, parentId: string, branch: string): void {
+  const parent = getNode(state, parentId);
+  const existing = parent.children.map((childId) => state.nodes[childId]).find((child) => child?.git.branch === branch);
+  if (existing) {
+    throw new Error(`Node ${parent.id} already has child ${existing.id} on branch ${branch}`);
+  }
+}
+
 export function sealLeafAndCreateChild(
   state: CcflowState,
   input: {
@@ -369,6 +377,7 @@ export function branchFromNode(
   if (!base.git.commitHash && !input.baseCommitHash) {
     throw new Error("Cannot branch from node without commit");
   }
+  assertCanAddChildOnBranch(state, base.id, input.branchName);
 
   const now = input.now ?? new Date().toISOString();
   const idFactory = input.idFactory ?? createId;
@@ -525,18 +534,25 @@ export function deleteLeafNode(
   removeUnusedWorktrees(state, deletedWorktreeId);
 
   const focusId = chooseFocusAfterDelete(state, pruneResult.nearestRemainingAncestorId ?? primaryParent.id);
-
   const focusNode = getNode(state, focusId);
   const focusWorktree = getWorktree(state, focusNode.git.worktreeId);
   for (const worktree of Object.values(state.worktrees)) {
     if (worktree.id === focusWorktree.id) {
       worktree.status = "current";
-      worktree.currentNodeId = focusNode.id;
     } else if (worktree.status === "current") {
       worktree.status = "other";
     }
-    if (worktree.currentNodeId === node.id) {
-      worktree.currentNodeId = focusNode.id;
+
+    const currentNode = state.nodes[worktree.currentNodeId];
+    if (
+      worktree.id === focusWorktree.id ||
+      !currentNode ||
+      currentNode.id === node.id ||
+      currentNode.git.worktreeId !== worktree.id
+    ) {
+      const replacementId = chooseWorktreeCurrentNode(state, worktree.id, worktree.id === focusWorktree.id ? focusNode.id : undefined);
+      if (!replacementId) throw new Error(`Worktree has no remaining node: ${worktree.id}`);
+      worktree.currentNodeId = replacementId;
     }
   }
   state.currentNodeId = focusNode.id;
@@ -683,6 +699,15 @@ export function assertGraphInvariants(state: CcflowState): void {
         throw new Error(`Child ${childId} does not reference parent ${node.id}`);
       }
     }
+    const childByBranch = new Map<string, string>();
+    for (const childId of node.children) {
+      const child = state.nodes[childId]!;
+      const previousChildId = childByBranch.get(child.git.branch);
+      if (previousChildId) {
+        throw new Error(`Node ${node.id} has multiple children on branch ${child.git.branch}: ${previousChildId}, ${child.id}`);
+      }
+      childByBranch.set(child.git.branch, child.id);
+    }
   }
 
   const currentWorktrees = Object.values(state.worktrees).filter((worktree) => worktree.status === "current");
@@ -714,6 +739,13 @@ function chooseFocusAfterDelete(state: CcflowState, parentId: string): string {
   if (parent && isSafeFocusTarget(state, parent.id) && isLeafNode(state, parent.id)) return parent.id;
   if (parent) {
     for (const childId of parent.children) {
+      const child = state.nodes[childId];
+      if (child?.git.worktreeId === parent.git.worktreeId && isSafeFocusTarget(state, child.id) && isLeafNode(state, child.id)) {
+        return child.id;
+      }
+    }
+    if (isSafeFocusTarget(state, parent.id)) return parent.id;
+    for (const childId of parent.children) {
       if (isSafeFocusTarget(state, childId) && isLeafNode(state, childId)) return childId;
     }
   }
@@ -723,7 +755,23 @@ function chooseFocusAfterDelete(state: CcflowState, parentId: string): string {
   for (const node of Object.values(state.nodes)) {
     if (isSafeFocusTarget(state, node.id) && isLeafNode(state, node.id)) return node.id;
   }
-  return state.currentNodeId;
+  if (state.nodes[state.currentNodeId]) return state.currentNodeId;
+  const fallback = Object.values(state.nodes)[0];
+  if (!fallback) throw new Error("Cannot choose focus after deleting the last node");
+  return fallback.id;
+}
+
+function chooseWorktreeCurrentNode(state: CcflowState, worktreeId: string, preferredNodeId?: string): string | null {
+  const preferredNode = preferredNodeId ? state.nodes[preferredNodeId] : undefined;
+  if (preferredNode?.git.worktreeId === worktreeId) return preferredNode.id;
+
+  const currentNode = state.nodes[state.worktrees[worktreeId]?.currentNodeId ?? ""];
+  if (currentNode?.git.worktreeId === worktreeId) return currentNode.id;
+
+  const candidates = Object.values(state.nodes)
+    .filter((node) => node.git.worktreeId === worktreeId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  return candidates.find((node) => isSafeFocusTarget(state, node.id))?.id ?? candidates[0]?.id ?? null;
 }
 
 function pruneEmptyAncestors(

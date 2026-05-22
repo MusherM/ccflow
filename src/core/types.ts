@@ -81,12 +81,21 @@ export interface CcflowSettings {
   };
 }
 
+export interface CcflowUiPreferences {
+  focusNodeId?: string;
+  graphViewport?: {
+    x: number;
+    y: number;
+  };
+}
+
 export interface CcflowState {
   version: 1;
   repoRoot: string;
   currentWorktreeId: string;
   currentNodeId: string;
   settings: CcflowSettings;
+  ui?: CcflowUiPreferences;
   nodes: Record<string, CcflowNode>;
   worktrees: Record<string, WorktreeInfo>;
 }
