@@ -15,6 +15,7 @@ import { quarantineTerminalInput, releaseStdinForChildProcess, resetTerminalForC
 import {
   buildEdgeLayer,
   chooseExistingFocusId,
+  GRAPH_NODE_HEIGHT,
   ensureNodeVisible,
   layoutGraph,
   projectVisiblePositions,
@@ -529,6 +530,7 @@ function graphPanel(state: CcflowState, ui: UiState, focusNode: CcflowNode, widt
       title: " node graph ",
       backgroundColor: "#020617",
       position: "relative",
+      overflow: "hidden",
     },
     Text({
       content: edgeLayer,
@@ -568,7 +570,7 @@ function nodeCard(
       left,
       top,
       width,
-      height: 6,
+      height: GRAPH_NODE_HEIGHT,
       border: true,
       borderStyle: "rounded",
       borderColor,
@@ -583,8 +585,7 @@ function nodeCard(
       attributes: focused ? TextAttributes.BOLD : TextAttributes.NONE,
     }),
     Text({ content: truncate(`${node.type} · ${node.status}`, width - 4), fg: focused ? "#0f172a" : accent }),
-    Text({ content: truncate(`commit ${commit}`, width - 4), fg: focused ? "#0f172a" : "#94a3b8" }),
-    Text({ content: truncate(`wt ${worktree.branch}`, width - 4), fg: focused ? "#0f172a" : "#cbd5e1" }),
+    Text({ content: truncate(`commit ${commit}  wt ${worktree.branch}`, width - 4), fg: focused ? "#0f172a" : "#94a3b8" }),
   );
 }
 

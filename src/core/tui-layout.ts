@@ -16,8 +16,8 @@ export interface PositionedNode {
   row: number;
 }
 
-export const GRAPH_NODE_WIDTH = 28;
-export const GRAPH_NODE_HEIGHT = 6;
+export const GRAPH_NODE_WIDTH = 32;
+export const GRAPH_NODE_HEIGHT = 5;
 
 const GRAPH_LANE_GAP = 10;
 const GRAPH_ROW_GAP = 2;
@@ -100,10 +100,10 @@ export function projectVisiblePositions(
       y: position.y - viewport.y,
     }))
     .filter((position) => (
-      position.x >= 0 &&
-      position.y >= 0 &&
-      position.x + position.width <= viewportWidth &&
-      position.y + position.height <= viewportHeight
+      position.x < viewportWidth &&
+      position.y < viewportHeight &&
+      position.x + position.width > 0 &&
+      position.y + position.height > 0
     ));
 }
 

@@ -2,7 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createInitialState, sealLeafAndCreateChild } from "../src/core/graph.js";
 import { emptyStats, type CcflowState } from "../src/core/types.js";
-import { chooseExistingFocusId, ensureNodeVisible, layoutGraph, projectVisiblePositions, sanitizeGraphViewport } from "../src/core/tui-layout.js";
+import {
+  chooseExistingFocusId,
+  ensureNodeVisible,
+  GRAPH_NODE_HEIGHT,
+  GRAPH_NODE_WIDTH,
+  layoutGraph,
+  projectVisiblePositions,
+  sanitizeGraphViewport,
+} from "../src/core/tui-layout.js";
 
 test("graph layout keeps node widths fixed when horizontal lanes exceed the viewport", () => {
   const state = createLinearState(8);
@@ -10,7 +18,8 @@ test("graph layout keeps node widths fixed when horizontal lanes exceed the view
   const widths = new Set(positions.map((position) => position.width));
   const last = positions.find((position) => position.node.id === state.currentNodeId);
 
-  assert.deepEqual([...widths], [28]);
+  assert.deepEqual([...widths], [GRAPH_NODE_WIDTH]);
+  assert.equal(positions[0]?.height, GRAPH_NODE_HEIGHT);
   assert.ok(last);
   assert.ok(last.x + last.width > 68);
 });
@@ -43,6 +52,19 @@ test("graph viewport pans automatically when the focused node is outside the can
   assert.ok(visibleFocus);
   assert.ok(visibleFocus.x >= 0);
   assert.ok(visibleFocus.x + visibleFocus.width <= 68);
+});
+
+test("graph viewport keeps partially visible nodes renderable", () => {
+  const state = createLinearState(2);
+  const positions = layoutGraph(state);
+  const root = positions[0]!;
+
+  const visible = projectVisiblePositions(positions, { x: root.x + 8, y: root.y + 2 }, 20, 3);
+  const visibleRoot = visible.find((position) => position.node.id === root.node.id);
+
+  assert.ok(visibleRoot);
+  assert.equal(visibleRoot.x, -8);
+  assert.equal(visibleRoot.y, -2);
 });
 
 function createLinearState(depth: number): CcflowState {
