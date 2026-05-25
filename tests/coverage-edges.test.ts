@@ -20,6 +20,8 @@ import {
 import { JobRunner } from "../src/core/jobs.js";
 import { runCommand, tryCommand } from "../src/core/shell.js";
 import {
+  drainProcessSignalsForChildProcess,
+  ignoreProcessSignalsForChildProcess,
   quarantineTerminalInput,
   releaseStdinForChildProcess,
   resetTerminalForChildProcess,
@@ -70,6 +72,33 @@ test("terminal helpers reset tty output, release stdin, and quarantine buffered 
   nonTty.isTTY = false;
   await quarantineTerminalInput({ input: nonTty as never, durationMs: 0 });
   assert.deepEqual(nonTty.rawModes, []);
+});
+
+test("terminal helpers let child-owned SIGINTs leave the parent process alive", async () => {
+  let parentSigints = 0;
+  const parentListener = () => {
+    parentSigints += 1;
+  };
+
+  process.on("SIGINT", parentListener);
+  try {
+    const restore = ignoreProcessSignalsForChildProcess(["SIGINT"]);
+    process.emit("SIGINT", "SIGINT");
+    await drainProcessSignalsForChildProcess();
+    restore();
+    assert.equal(parentSigints, 0);
+
+    process.emit("SIGINT", "SIGINT");
+    assert.equal(parentSigints, 1);
+
+    const dropRestore = ignoreProcessSignalsForChildProcess(["SIGINT"], { restoreExisting: false });
+    process.emit("SIGINT", "SIGINT");
+    await drainProcessSignalsForChildProcess();
+    dropRestore();
+    assert.equal(parentSigints, 1);
+  } finally {
+    process.off("SIGINT", parentListener);
+  }
 });
 
 test("git helpers cover existing repos, detached branches, worktree reuse, and stats fallbacks", () => {

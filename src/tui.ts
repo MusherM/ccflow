@@ -10,6 +10,7 @@ import { ClaudeAdapter } from "./core/claude.js";
 import { GitAdapter } from "./core/git.js";
 import { getNode, getWorktree, isEditableLeaf, isLeafNode, isOperationBlockedNode, isSafeFocusTarget, switchCurrentWorktree } from "./core/graph.js";
 import { JobRunner } from "./core/jobs.js";
+import { logEvent } from "./core/log.js";
 import { saveSession, saveState } from "./core/storage.js";
 import { quarantineTerminalInput, releaseStdinForChildProcess, resetTerminalForChildProcess } from "./core/terminal.js";
 import {
@@ -56,13 +57,38 @@ export async function runCcflowTui(state: CcflowState): Promise<void> {
   const claude = new ClaudeAdapter();
   const jobs = new JobRunner(git, claude);
   const ui = createInitialUiState(state);
+  let loop = 0;
+  logEvent(state.repoRoot, "tui:run:start", {
+    focusId: ui.focusId,
+    currentNodeId: state.currentNodeId,
+    currentWorktreeId: state.currentWorktreeId,
+  });
 
   while (true) {
+    loop += 1;
+    logEvent(state.repoRoot, "tui:loop:start", {
+      loop,
+      focusId: ui.focusId,
+      currentNodeId: state.currentNodeId,
+      currentWorktreeId: state.currentWorktreeId,
+    });
     refreshDirtyStatuses(state, git);
     const exit = await runGraphOnce(state, ui, jobs);
+    logEvent(state.repoRoot, "tui:graph:exit", {
+      loop,
+      kind: exit.kind,
+      nodeId: exit.nodeId ?? null,
+      focusId: ui.focusId,
+    });
     if (exit.kind === "quit") return;
     if (exit.kind === "enter" && exit.nodeId) {
       await enterLeaf(state, exit.nodeId, claude, ui);
+      logEvent(state.repoRoot, "tui:enter:return-to-loop", {
+        loop,
+        nodeId: exit.nodeId,
+        focusId: ui.focusId,
+        message: ui.message,
+      });
     }
   }
 }
@@ -97,8 +123,12 @@ async function runGraphOnce(
   process.env.OPENTUI_GRAPHICS = "false";
   let renderer: CliRenderer;
   try {
+    logEvent(state.repoRoot, "tui:renderer:create-start", {
+      focusId: ui.focusId,
+      currentNodeId: state.currentNodeId,
+    });
     renderer = await createCliRenderer({
-      exitOnCtrlC: true,
+      exitOnCtrlC: false,
       clearOnShutdown: true,
       screenMode: "alternate-screen",
       targetFps: 30,
@@ -109,6 +139,10 @@ async function runGraphOnce(
       enableMouseMovement: false,
       backgroundColor: "#070b10",
     });
+    logEvent(state.repoRoot, "tui:renderer:create-done", {
+      width: renderer.terminalWidth || renderer.width || null,
+      height: renderer.terminalHeight || renderer.height || null,
+    });
   } finally {
     restoreEnvValue("OPENTUI_GRAPHICS", previousOpenTuiGraphics);
   }
@@ -118,6 +152,11 @@ async function runGraphOnce(
   const settle = (result: TuiExit) => {
     if (settled) return;
     settled = true;
+    logEvent(state.repoRoot, "tui:graph:settle-start", {
+      kind: result.kind,
+      nodeId: result.nodeId ?? null,
+      focusId: ui.focusId,
+    });
     void (async () => {
       renderer.disableKittyKeyboard();
       renderer.suspend();
@@ -128,6 +167,11 @@ async function runGraphOnce(
       await quarantineTerminalInput();
       releaseStdinForChildProcess();
       resetTerminalForChildProcess();
+      logEvent(state.repoRoot, "tui:graph:settle-done", {
+        kind: result.kind,
+        nodeId: result.nodeId ?? null,
+        focusId: ui.focusId,
+      });
       resolve(result);
     })();
   };
@@ -162,6 +206,18 @@ async function runGraphOnce(
   };
 
   renderer.keyInput.on("keypress", (key) => {
+    if (key.ctrl && key.name === "c") {
+      persistAndSaveState();
+      logEvent(state.repoRoot, "tui:key:ctrl-c", {
+        focusId: ui.focusId,
+        mode: ui.mode,
+        busy: ui.busy,
+      });
+      settle({ kind: "quit" });
+      key.preventDefault();
+      return;
+    }
+
     if (ui.inputMode) {
       if (key.name === "enter" || key.name === "return" || key.sequence === "\r") {
         const cb = ui.inputMode.onConfirm;
@@ -347,6 +403,10 @@ async function runGraphOnce(
   renderer.on("resize", rerender);
   renderer.on("destroy", () => {
     if (!settled) {
+      logEvent(state.repoRoot, "tui:renderer:destroy-unexpected", {
+        focusId: ui.focusId,
+        currentNodeId: state.currentNodeId,
+      });
       try {
         persistAndSaveState();
       } catch {
@@ -358,6 +418,10 @@ async function runGraphOnce(
   });
 
   rerender();
+  logEvent(state.repoRoot, "tui:renderer:start", {
+    focusId: ui.focusId,
+    currentNodeId: state.currentNodeId,
+  });
   renderer.start();
   return done;
 }
@@ -378,9 +442,21 @@ async function enterLeaf(
   node.cc.resumeMode = node.cc.sessionId ? "resume" : "new";
   node.updatedAt = new Date().toISOString();
   saveState(state);
+  logEvent(state.repoRoot, "tui:enter:start", {
+    nodeId: node.id,
+    worktreeId: worktree.id,
+    worktreePath: worktree.path,
+    resumeMode: node.cc.resumeMode,
+    sessionId: node.cc.sessionId,
+  });
 
   try {
-    const result = await claude.attachOrResume(node, worktree.path);
+    const result = await claude.attachOrResume(node, worktree.path, state.repoRoot);
+    logEvent(state.repoRoot, "tui:enter:attached", {
+      nodeId: node.id,
+      resultSessionId: result.sessionId,
+      alive: result.alive,
+    });
     node.cc.sessionId = result.sessionId;
     node.cc.processId = null;
     node.cc.resumeMode = result.sessionId ? "resume" : "new";
@@ -390,11 +466,22 @@ async function enterLeaf(
     saveState(state);
     ui.focusId = node.id;
     ui.message = "Claude session ended";
+    logEvent(state.repoRoot, "tui:enter:done", {
+      nodeId: node.id,
+      status: node.status,
+      focusId: ui.focusId,
+      sessionId: node.cc.sessionId,
+    });
   } catch (error) {
     node.status = "JobFailed";
     node.error = error instanceof Error ? error.message : String(error);
     saveState(state);
     ui.message = node.error ?? "Failed to enter Claude";
+    logEvent(state.repoRoot, "tui:enter:error", {
+      nodeId: node.id,
+      error: node.error,
+      focusId: ui.focusId,
+    });
   }
 }
 

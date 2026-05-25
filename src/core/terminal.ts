@@ -1,6 +1,8 @@
 import type { WriteStream } from "node:tty";
 import type { ReadStream } from "node:tty";
 
+const childOwnedSignals: NodeJS.Signals[] = ["SIGINT"];
+
 const terminalResetForChildProcess = [
   "\x1b[?25h",
   "\x1b[?1l",
@@ -28,6 +30,38 @@ export function releaseStdinForChildProcess(input: ReadStream = process.stdin): 
   input.removeAllListeners("data");
   if (input.setRawMode) input.setRawMode(false);
   input.pause();
+}
+
+export function ignoreProcessSignalsForChildProcess(
+  signals: NodeJS.Signals[] = childOwnedSignals,
+  options: { restoreExisting?: boolean } = {},
+): () => void {
+  const restoreExisting = options.restoreExisting ?? true;
+  const listeners = signals.map((signal) => {
+    const existing = process.rawListeners(signal);
+    process.removeAllListeners(signal);
+    const listener = () => {};
+    process.on(signal, listener);
+    return { signal, listener, existing };
+  });
+  let restored = false;
+
+  return () => {
+    if (restored) return;
+    restored = true;
+    for (const { signal, listener, existing } of listeners) {
+      process.off(signal, listener);
+      if (restoreExisting) {
+        for (const existingListener of existing) {
+          process.on(signal, existingListener);
+        }
+      }
+    }
+  };
+}
+
+export async function drainProcessSignalsForChildProcess(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
 export async function quarantineTerminalInput(

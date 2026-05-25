@@ -4,7 +4,13 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import type { CcflowNode } from "./types.js";
 import { logEvent } from "./log.js";
-import { quarantineTerminalInput, releaseStdinForChildProcess, resetTerminalForChildProcess } from "./terminal.js";
+import {
+  drainProcessSignalsForChildProcess,
+  ignoreProcessSignalsForChildProcess,
+  quarantineTerminalInput,
+  releaseStdinForChildProcess,
+  resetTerminalForChildProcess,
+} from "./terminal.js";
 
 /* node:coverage disable */
 function interactiveCommandFor(node: CcflowNode): { bin: string; args: string[] } {
@@ -21,13 +27,23 @@ export class ClaudeAdapter {
   async attachOrResume(
     node: CcflowNode,
     cwd: string,
+    repoRoot = cwd,
   ): Promise<{ sessionId: string | null; alive: boolean }> {
     const command = interactiveCommandFor(node);
 
     await quarantineTerminalInput();
     releaseStdinForChildProcess();
     resetTerminalForChildProcess();
+    const signalListenerCountsBefore = countSignalListeners(["SIGINT"]);
+    const restoreProcessSignals = ignoreProcessSignalsForChildProcess(undefined, { restoreExisting: false });
     try {
+      logEvent(repoRoot, "claude:interactive:start", {
+        nodeId: node.id,
+        bin: command.bin,
+        args: command.args,
+        cwd,
+        signalListenerCountsBefore,
+      });
       const result = spawnSync(command.bin, command.args, {
         cwd,
         stdio: "inherit",
@@ -40,13 +56,47 @@ export class ClaudeAdapter {
           FORCE_COLOR: "3",
         },
       });
-      if (result.error) throw result.error;
+      if (result.error) {
+        logEvent(repoRoot, "claude:interactive:error", {
+          nodeId: node.id,
+          cwd,
+          error: result.error.message,
+        });
+        throw result.error;
+      }
+      logEvent(repoRoot, "claude:interactive:done", {
+        nodeId: node.id,
+        cwd,
+        exitCode: result.status ?? null,
+        signal: result.signal ?? null,
+      });
     } finally {
+      logEvent(repoRoot, "claude:interactive:terminal-restore-start", {
+        nodeId: node.id,
+        cwd,
+      });
+      await drainProcessSignalsForChildProcess();
+      resetTerminalForChildProcess();
+      await quarantineTerminalInput({
+        durationMs: Number(process.env.CCFLOW_POST_CLAUDE_QUARANTINE_MS ?? process.env.CCFLOW_TERMINAL_QUARANTINE_MS ?? "800"),
+      });
       releaseStdinForChildProcess();
       resetTerminalForChildProcess();
+      await drainProcessSignalsForChildProcess();
+      restoreProcessSignals();
+      logEvent(repoRoot, "claude:interactive:terminal-restore-done", {
+        nodeId: node.id,
+        cwd,
+        signalListenerCountsAfter: countSignalListeners(["SIGINT"]),
+      });
     }
 
     const sessionId = this.findRecentClaudeSessionId(cwd) ?? node.cc.sessionId;
+    logEvent(repoRoot, "claude:interactive:session-detected", {
+      nodeId: node.id,
+      cwd,
+      sessionId,
+    });
     return { sessionId, alive: false };
   }
   /* node:coverage enable */
@@ -115,6 +165,10 @@ export class ClaudeAdapter {
     }
     return null;
   }
+}
+
+function countSignalListeners(signals: NodeJS.Signals[]): Record<string, number> {
+  return Object.fromEntries(signals.map((signal) => [signal, process.rawListeners(signal).length]));
 }
 
 function readLastSessionId(file: string, cwd: string): string | null {
