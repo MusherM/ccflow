@@ -3,6 +3,7 @@ node_modules/
 
 # 构建输出
 dist/
+dist-test/
 client/dist/
 server/dist/
 

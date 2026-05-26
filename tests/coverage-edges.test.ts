@@ -328,6 +328,7 @@ test("job runner covers clean sibling creation and failure state restoration", a
 test("job runner covers fallback direct commit and createNextNode commit failures", async () => {
   const { state, repoRoot } = createRepoState();
   const git = new GitAdapter();
+  fs.writeFileSync(path.join(repoRoot, ".gitignore"), ".ccflow/\n");
   fs.appendFileSync(path.join(repoRoot, "README.md"), "left dirty after claude\n");
 
   const runner = new JobRunner(git, {
@@ -337,6 +338,7 @@ test("job runner covers fallback direct commit and createNextNode commit failure
 
   assert.equal(result.success, true);
   assert.equal(git.hasDirtyChanges(repoRoot), false);
+  assert.equal(tryCommand("git", ["ls-files", ".gitignore"], { cwd: repoRoot }).stdout.trim(), ".gitignore");
   assert.match(git.lastCommitMessage(repoRoot), /Root|Auto commit/);
 
   const failingNext = new class extends JobRunner {

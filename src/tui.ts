@@ -25,6 +25,7 @@ import {
   type GraphViewport,
 } from "./core/tui-layout.js";
 import type { CcflowNode, CcflowState } from "./core/types.js";
+import type { CcflowConfig } from "./core/config.js";
 
 type Direction = "left" | "right" | "up" | "down";
 type UiMode = "graph" | "detail";
@@ -52,7 +53,7 @@ interface TuiExit {
   nodeId?: string;
 }
 
-export async function runCcflowTui(state: CcflowState): Promise<void> {
+export async function runCcflowTui(state: CcflowState, options: { config?: CcflowConfig } = {}): Promise<void> {
   const git = new GitAdapter();
   const claude = new ClaudeAdapter();
   const jobs = new JobRunner(git, claude);
@@ -82,7 +83,7 @@ export async function runCcflowTui(state: CcflowState): Promise<void> {
     });
     if (exit.kind === "quit") return;
     if (exit.kind === "enter" && exit.nodeId) {
-      await enterLeaf(state, exit.nodeId, claude, ui);
+      await enterLeaf(state, exit.nodeId, claude, ui, options.config);
       logEvent(state.repoRoot, "tui:enter:return-to-loop", {
         loop,
         nodeId: exit.nodeId,
@@ -431,6 +432,7 @@ async function enterLeaf(
   nodeId: string,
   claude: ClaudeAdapter,
   ui: UiState,
+  config?: CcflowConfig,
 ): Promise<void> {
   const node = getNode(state, nodeId);
   const worktree = getWorktree(state, node.git.worktreeId);
@@ -451,7 +453,7 @@ async function enterLeaf(
   });
 
   try {
-    const result = await claude.attachOrResume(node, worktree.path, state.repoRoot);
+    const result = await claude.attachOrResume(node, worktree.path, state.repoRoot, config);
     logEvent(state.repoRoot, "tui:enter:attached", {
       nodeId: node.id,
       resultSessionId: result.sessionId,

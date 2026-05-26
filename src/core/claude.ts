@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import type { CcflowNode } from "./types.js";
+import type { CcflowConfig } from "./config.js";
+import { splitShellWords } from "./config.js";
 import { logEvent } from "./log.js";
 import {
   drainProcessSignalsForChildProcess,
@@ -13,12 +15,13 @@ import {
 } from "./terminal.js";
 
 /* node:coverage disable */
-function interactiveCommandFor(node: CcflowNode): { bin: string; args: string[] } {
-  const claudeBin = process.env.CCFLOW_CLAUDE_BIN ?? "claude";
+function interactiveCommandFor(node: CcflowNode, config?: CcflowConfig): { bin: string; args: string[] } {
+  const claudeBin = config?.claude.bin ?? process.env.CCFLOW_CLAUDE_BIN ?? "claude";
+  const interactiveArgs = config?.claude.interactiveArgs ?? ["--dangerously-skip-permissions"];
   if (node.cc.sessionId && node.cc.resumeMode === "resume") {
-    return { bin: claudeBin, args: ["--resume", node.cc.sessionId, "--dangerously-skip-permissions"] };
+    return { bin: claudeBin, args: ["--resume", node.cc.sessionId, ...interactiveArgs] };
   }
-  return { bin: claudeBin, args: ["--dangerously-skip-permissions"] };
+  return { bin: claudeBin, args: interactiveArgs };
 }
 /* node:coverage enable */
 
@@ -28,8 +31,9 @@ export class ClaudeAdapter {
     node: CcflowNode,
     cwd: string,
     repoRoot = cwd,
+    config?: CcflowConfig,
   ): Promise<{ sessionId: string | null; alive: boolean }> {
-    const command = interactiveCommandFor(node);
+    const command = interactiveCommandFor(node, config);
 
     await quarantineTerminalInput();
     releaseStdinForChildProcess();
@@ -78,7 +82,7 @@ export class ClaudeAdapter {
       await drainProcessSignalsForChildProcess();
       resetTerminalForChildProcess();
       await quarantineTerminalInput({
-        durationMs: Number(process.env.CCFLOW_POST_CLAUDE_QUARANTINE_MS ?? process.env.CCFLOW_TERMINAL_QUARANTINE_MS ?? "800"),
+        durationMs: config?.claude.terminalQuarantineMs ?? Number(process.env.CCFLOW_POST_CLAUDE_QUARANTINE_MS ?? process.env.CCFLOW_TERMINAL_QUARANTINE_MS ?? "800"),
       });
       releaseStdinForChildProcess();
       resetTerminalForChildProcess();
@@ -101,20 +105,21 @@ export class ClaudeAdapter {
   }
   /* node:coverage enable */
 
-  runHeadless(repoRoot: string, prompt: string, cwd: string): { ok: boolean; stdout: string; stderr: string } {
-    if (process.env.CCFLOW_DISABLE_CLAUDE_JOBS === "1") {
+  runHeadless(repoRoot: string, prompt: string, cwd: string, config?: CcflowConfig): { ok: boolean; stdout: string; stderr: string } {
+    if (config?.claude.disableJobs || process.env.CCFLOW_DISABLE_CLAUDE_JOBS === "1") {
       return { ok: false, stdout: "", stderr: "Claude jobs are disabled by CCFLOW_DISABLE_CLAUDE_JOBS." };
     }
 
-    const claudeBin = process.env.CCFLOW_CLAUDE_BIN ?? "claude";
-    const extraArgs = splitShellWords(process.env.CCFLOW_CLAUDE_ARGS ?? "");
+    const claudeBin = config?.claude.bin ?? process.env.CCFLOW_CLAUDE_BIN ?? "claude";
+    const extraArgs = config?.claude.headlessArgs ?? splitShellWords(process.env.CCFLOW_CLAUDE_ARGS ?? "");
+    const model = config?.claude.model ?? "haiku";
     logEvent(repoRoot, "claude:headless:start", {
       bin: claudeBin,
       cwd,
       promptLength: prompt.length,
       promptPreview: prompt.slice(0, 500),
     });
-    const result = spawnSync(claudeBin, [...extraArgs, "-p", prompt, "--permission-mode", "bypassPermissions", "--output-format", "json", "--model", "haiku"], {
+    const result = spawnSync(claudeBin, [...extraArgs, "-p", prompt, "--permission-mode", "bypassPermissions", "--output-format", "json", "--model", model], {
       cwd,
       encoding: "utf8",
       stdio: "pipe",
@@ -184,32 +189,4 @@ function readLastSessionId(file: string, cwd: string): string | null {
     return null;
   }
   return null;
-}
-
-function splitShellWords(value: string): string[] {
-  const words: string[] = [];
-  let current = "";
-  let quote: "'" | '"' | null = null;
-  for (let index = 0; index < value.length; index += 1) {
-    const char = value[index] ?? "";
-    if (quote) {
-      if (char === quote) quote = null;
-      else current += char;
-      continue;
-    }
-    if (char === "'" || char === '"') {
-      quote = char;
-      continue;
-    }
-    if (/\s/.test(char)) {
-      if (current) {
-        words.push(current);
-        current = "";
-      }
-      continue;
-    }
-    current += char;
-  }
-  if (current) words.push(current);
-  return words;
 }

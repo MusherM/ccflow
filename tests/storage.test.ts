@@ -23,7 +23,7 @@ test("loadOrInitState creates repo-local ccflow files and reloads the same graph
   });
 
   assert.equal(fs.existsSync(statePath(repoRoot)), true);
-  assert.equal(fs.existsSync(promptsPath(repoRoot)), true);
+  assert.equal(fs.existsSync(promptsPath(repoRoot)), false);
   assert.equal(second.currentNodeId, first.currentNodeId);
   assert.equal(Object.keys(second.nodes).length, 1);
   assert.equal(second.nodes[second.currentNodeId]?.type, "leaf");

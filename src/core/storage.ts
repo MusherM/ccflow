@@ -24,8 +24,12 @@ export function jobsDir(repoRoot: string): string {
   return path.join(ccflowDir(repoRoot), "jobs");
 }
 
+export function logsDir(repoRoot: string): string {
+  return path.join(ccflowDir(repoRoot), "logs");
+}
+
 export function ensureCcflowDirs(repoRoot: string): void {
-  for (const dir of [ccflowDir(repoRoot), sessionsDir(repoRoot), jobsDir(repoRoot)]) {
+  for (const dir of [ccflowDir(repoRoot), sessionsDir(repoRoot), jobsDir(repoRoot), logsDir(repoRoot)]) {
     fs.mkdirSync(dir, { recursive: true });
   }
 }
@@ -36,7 +40,6 @@ export function loadOrInitState(input: {
   commitHash: string | null;
 }): CcflowState {
   ensureCcflowDirs(input.repoRoot);
-  ensurePrompts(input.repoRoot);
 
   const file = statePath(input.repoRoot);
   if (fs.existsSync(file)) {
@@ -57,8 +60,9 @@ export function saveState(state: CcflowState): void {
 }
 
 export function loadPrompts(repoRoot: string): PromptsConfig {
-  ensurePrompts(repoRoot);
-  return JSON.parse(fs.readFileSync(promptsPath(repoRoot), "utf8")) as PromptsConfig;
+  const file = promptsPath(repoRoot);
+  if (!fs.existsSync(file)) return defaultPrompts;
+  return JSON.parse(fs.readFileSync(file, "utf8")) as PromptsConfig;
 }
 
 export function ensurePrompts(repoRoot: string): void {

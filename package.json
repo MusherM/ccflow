@@ -1,15 +1,48 @@
 {
-  "name": "ccflow",
+  "name": "@lxy/ccflow",
   "version": "0.1.0",
-  "private": true,
+  "description": "Node-based Claude Code workflow manager for Git DAG and worktree sessions.",
+  "license": "MIT",
   "type": "module",
+  "bin": {
+    "ccflow": "./bin/ccflow.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lxy/ccflow.git"
+  },
+  "keywords": [
+    "claude-code",
+    "git",
+    "worktree",
+    "tui",
+    "workflow"
+  ],
   "scripts": {
-    "dev": "bun run src/main.ts",
-    "start": "bun run src/main.ts",
-    "build": "tsc -p tsconfig.json",
+    "clean": "node scripts/clean-dist.mjs",
+    "dev": "tsx src/main.ts",
+    "start": "node dist/main.js",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "build:test": "rm -rf dist-test && tsc -p tsconfig.test.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test --test-concurrency=1 dist/tests/*.test.js",
-    "test:coverage": "npm run build && node --test --test-concurrency=1 --experimental-test-coverage --test-coverage-include='dist/src/**/*.js' --test-coverage-exclude='dist/tests/**/*.js' --test-coverage-lines=95 dist/tests/*.test.js",
+    "test": "npm run build:test && node --test --test-concurrency=1 dist-test/tests/*.test.js",
+    "test:coverage": "npm run build:test && node --test --test-concurrency=1 --experimental-test-coverage --test-coverage-include='dist-test/src/**/*.js' --test-coverage-exclude='dist-test/tests/**/*.js' --test-coverage-lines=95 dist-test/tests/*.test.js",
+    "pack:dry-run": "npm run build && node scripts/verify-package-contents.mjs",
+    "verify:install": "npm run build && node scripts/verify-global-install.mjs",
+    "verify:release": "npm run typecheck && npm test && npm run pack:dry-run && npm run verify:install",
+    "prepack": "npm run build",
     "proto:ink": "tsx --tsconfig prototypes/ink-node-view/tsconfig.json prototypes/ink-node-view/src/main.tsx",
     "proto:opentui": "bun run prototypes/opentui-node-view/src/main.ts",
     "proto:ink-tree": "tsx --tsconfig prototypes/ink-tree-view/tsconfig.json prototypes/ink-tree-view/src/main.tsx",
@@ -18,13 +51,13 @@
     "proto:typecheck": "tsc -p prototypes/ink-node-view/tsconfig.json --noEmit && tsc -p prototypes/opentui-node-view/tsconfig.json --noEmit && tsc -p prototypes/ink-tree-view/tsconfig.json --noEmit && tsc -p prototypes/ink-outline-view/tsconfig.json --noEmit && tsc -p prototypes/opentui-tree-view/tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@opentui/core": "^0.2.14",
-    "@types/react": "^19.2.14",
-    "ink": "^7.0.3",
-    "react": "^19.2.6"
+    "@opentui/core": "^0.2.14"
   },
   "devDependencies": {
     "@types/node": "^25.0.3",
+    "@types/react": "^19.2.14",
+    "ink": "^7.0.3",
+    "react": "^19.2.6",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }

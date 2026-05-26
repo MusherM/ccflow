@@ -11,16 +11,26 @@ const gitIdentity = {
 };
 
 const userPathspec = [".", ":(exclude).ccflow", ":(exclude).worktrees", ":(exclude).DS_Store", ":(exclude).claude"];
+const userResetPathspec = [".ccflow", ".worktrees", ".DS_Store", ".claude"];
 
 export class GitAdapter {
+  findRepoRoot(cwd: string): string | null {
+    const result = tryCommand("git", ["rev-parse", "--show-toplevel"], { cwd });
+    return result.ok && result.stdout.trim() ? path.resolve(result.stdout.trim()) : null;
+  }
+
   ensureRepo(cwd: string): string {
-    const existing = tryCommand("git", ["rev-parse", "--show-toplevel"], { cwd });
-    if (existing.ok) {
-      const root = path.resolve(existing.stdout.trim());
+    const existing = this.findRepoRoot(cwd);
+    if (existing) {
+      const root = path.resolve(existing);
       this.ensureHead(root);
       return root;
     }
 
+    return this.initRepo(cwd);
+  }
+
+  initRepo(cwd: string): string {
     fs.mkdirSync(cwd, { recursive: true });
     runCommand("git", ["init"], { cwd });
     this.ensureHead(cwd);
@@ -64,7 +74,8 @@ export class GitAdapter {
   }
 
   addAll(cwd: string): void {
-    runCommand("git", ["add", "-A", "--", ...userPathspec], { cwd });
+    runCommand("git", ["add", "-A", "--", "."], { cwd });
+    tryCommand("git", ["reset", "-q", "--", ...userResetPathspec], { cwd });
   }
 
   commit(cwd: string, message: string): string {
@@ -80,6 +91,17 @@ export class GitAdapter {
 
   resetHard(cwd: string, commitHash: string): void {
     runCommand("git", ["reset", "--hard", commitHash], { cwd });
+  }
+
+  ensureInternalExcludes(repoRoot: string): void {
+    const excludePath = path.join(repoRoot, ".git", "info", "exclude");
+    fs.mkdirSync(path.dirname(excludePath), { recursive: true });
+    const existing = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, "utf8") : "";
+    const entries = [".ccflow/", ".worktrees/", ".claude/"];
+    const missing = entries.filter((entry) => !existing.split(/\r?\n/).includes(entry));
+    if (missing.length === 0) return;
+    const prefix = existing && !existing.endsWith("\n") ? "\n" : "";
+    fs.appendFileSync(excludePath, `${prefix}${missing.join("\n")}\n`);
   }
 
   createWorktree(input: {

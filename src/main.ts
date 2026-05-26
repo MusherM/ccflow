@@ -1,22 +1,8 @@
-import path from "node:path";
-import { GitAdapter } from "./core/git.js";
-import { normalizeAfterBoot } from "./core/graph.js";
-import { loadOrInitState, saveState } from "./core/storage.js";
-import { runCcflowTui } from "./tui.js";
+import { runCli } from "./cli.js";
 
 async function main(): Promise<void> {
-  const cwd = path.resolve(process.argv[2] ?? process.cwd());
-  const git = new GitAdapter();
-  const repoRoot = git.ensureRepo(cwd);
-  const state = loadOrInitState({
-    repoRoot,
-    branch: git.currentBranch(repoRoot),
-    commitHash: git.currentCommit(repoRoot),
-  });
-  normalizeAfterBoot(state);
-  saveState(state);
-
-  await runCcflowTui(state);
+  const code = await runCli(process.argv.slice(2));
+  process.exitCode = code;
 }
 
 main().catch((error) => {

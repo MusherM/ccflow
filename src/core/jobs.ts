@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { ClaudeAdapter } from "./claude.js";
+import { loadConfig } from "./config.js";
 import { GitAdapter, isDefaultBranch, mergeBranchName, slug, worktreeIdFromBranch, worktreePathForBranch } from "./git.js";
 import {
   assertCanAddChildOnBranch,
@@ -20,7 +21,8 @@ import {
   sealLeafAndCreateChild,
 } from "./graph.js";
 import { logEvent } from "./log.js";
-import { loadPrompts, saveJob, saveState, saveSession } from "./storage.js";
+import { buildCommitPrompt, buildMergePrompt } from "./prompts.js";
+import { saveJob, saveState, saveSession } from "./storage.js";
 import type { CcflowNode, CcflowState, JobRecord, NodeStats } from "./types.js";
 
 export interface CommitJobResult {
@@ -84,32 +86,13 @@ export class JobRunner {
     try {
       this.updateJob(state.repoRoot, job, "inspecting");
 
-      const prompts = loadPrompts(state.repoRoot);
-      const prompt = [
-        prompts.commit.system,
-        "",
-        "Review the worktree below. You MUST leave it in a clean committed state — or clean with nothing to commit.",
-        "",
-        "Step 1 — Find and ignore non-project files:",
-        "  - Look at every untracked file",
-        "  - For files that do NOT belong (build output, downloads, logs, personal files, etc.), add their patterns to .gitignore",
-        "",
-        "Step 2 — Stage and commit:",
-        "  - Run: git add .  (the updated .gitignore will exclude non-project files)",
-        "  - If there are staged changes, run: git commit -m \"<conventional-commit-message>\"",
-        "  - If nothing is staged after git add ., stop — do NOT create an empty commit",
-        "",
-        "Do not ask questions. Follow the steps in order.",
-        "",
-        "Node:",
-        JSON.stringify({ id: node.id, title: node.title, branch: node.git.branch }, null, 2),
-        "",
-        "Git status:",
-        this.git.statusShort(worktree.path) || "(clean)",
-        "",
-        "Git diff:",
-        this.git.diff(worktree.path) || "(no diff)",
-      ].join("\n");
+      const loadedConfig = loadConfig({ repoRoot: state.repoRoot });
+      const prompt = buildCommitPrompt({
+        config: loadedConfig.config,
+        node,
+        gitStatus: this.git.statusShort(worktree.path),
+        gitDiff: this.git.diff(worktree.path),
+      });
 
       this.updateJob(state.repoRoot, job, "running-claude");
       logEvent(state.repoRoot, "commit-leaf:claude-start", {
@@ -117,7 +100,7 @@ export class JobRunner {
         worktreePath: worktree.path,
         promptLength: prompt.length,
       });
-      const result = this.claude.runHeadless(state.repoRoot, prompt, worktree.path);
+      const result = this.claude.runHeadless(state.repoRoot, prompt, worktree.path, loadedConfig.config);
       logEvent(state.repoRoot, "commit-leaf:claude-done", {
         nodeId: node.id,
         ok: result.ok,
@@ -180,7 +163,7 @@ export class JobRunner {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.failJob(state.repoRoot, job, message);
-      node.status = "CommitFailed";
+      node.status = canCommitPendingInternal ? "ParentCommitFailed" : "CommitFailed";
       node.locked = false;
       node.error = message;
       worktree.locked = false;
@@ -521,26 +504,18 @@ export class JobRunner {
     });
 
     // Run headless Claude to attempt conflict resolution
-    const prompts = loadPrompts(state.repoRoot);
-    const prompt = [
-      prompts.merge.system,
-      "",
-      prompts.merge.prompt,
-      "",
-      "Merge worktree:",
+    const loadedConfig = loadConfig({ repoRoot: state.repoRoot });
+    const prompt = buildMergePrompt({
+      config: loadedConfig.config,
       worktreePath,
-      "",
-      "Conflict files:",
-      allConflicts.join("\n"),
-      "",
-      "Git status:",
-      this.git.statusShort(worktreePath) || "(clean)",
-      "",
-      "Resolve all merge conflicts and create a merge commit. If you cannot resolve everything, leave the remaining conflicts for manual resolution.",
-    ].join("\n");
+      conflictFiles: allConflicts,
+      gitStatus: this.git.statusShort(worktreePath),
+    });
 
     logEvent(state.repoRoot, "merge-leaves:headless-resolution-start", { mergeNodeId: node.id });
-    const result = this.claude.runHeadless(state.repoRoot, prompt, worktreePath);
+    const result = loadedConfig.config.merge.headlessResolution
+      ? this.claude.runHeadless(state.repoRoot, prompt, worktreePath, loadedConfig.config)
+      : { ok: false, stdout: "", stderr: "Headless merge resolution is disabled by CCFlow config." };
     logEvent(state.repoRoot, "merge-leaves:headless-resolution-done", {
       mergeNodeId: node.id,
       ok: result.ok,
