@@ -5,10 +5,10 @@ CCFlow is a terminal workflow manager for Claude Code sessions, Git commits, and
 ## Install
 
 ```bash
-npm i -g @lxy/ccflow
+npm i -g ccflow
 ```
 
-CCFlow requires Node.js 22 or newer, Git, and the Claude Code CLI available as `claude` or configured through CCFlow config.
+CCFlow requires Node.js 22 or newer, Git, Bun on `PATH` for the OpenTUI runtime, and the Claude Code CLI available as `claude` or configured through CCFlow config. The npm install runs an OpenTUI runtime check and fails immediately when neither Bun nor a Node.js build with `node:ffi` support can load `@opentui/core`.
 
 ## First Run
 

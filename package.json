@@ -1,5 +1,5 @@
 {
-  "name": "@lxy/ccflow",
+  "name": "ccflow",
   "version": "0.1.0",
   "description": "Node-based Claude Code workflow manager for Git DAG and worktree sessions.",
   "license": "MIT",
@@ -10,14 +10,12 @@
   "files": [
     "bin",
     "dist",
+    "scripts/verify-opentui-runtime.mjs",
     "README.md",
     "LICENSE"
   ],
   "engines": {
     "node": ">=22.0.0"
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "repository": {
     "type": "git",
@@ -32,8 +30,8 @@
   ],
   "scripts": {
     "clean": "node scripts/clean-dist.mjs",
-    "dev": "tsx src/main.ts",
-    "start": "node dist/main.js",
+    "dev": "bun run src/main.ts",
+    "start": "bun run dist/main.js",
     "build": "npm run clean && tsc -p tsconfig.build.json",
     "build:test": "rm -rf dist-test && tsc -p tsconfig.test.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -42,6 +40,7 @@
     "pack:dry-run": "npm run build && node scripts/verify-package-contents.mjs",
     "verify:install": "npm run build && node scripts/verify-global-install.mjs",
     "verify:release": "npm run typecheck && npm test && npm run pack:dry-run && npm run verify:install",
+    "postinstall": "node scripts/verify-opentui-runtime.mjs",
     "prepack": "npm run build",
     "proto:ink": "tsx --tsconfig prototypes/ink-node-view/tsconfig.json prototypes/ink-node-view/src/main.tsx",
     "proto:opentui": "bun run prototypes/opentui-node-view/src/main.ts",

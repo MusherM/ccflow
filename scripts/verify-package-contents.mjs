@@ -17,7 +17,8 @@ if (result.status !== 0) {
 const parsed = JSON.parse(result.stdout);
 const files = parsed[0].files.map((file) => file.path).sort();
 const requiredPrefixes = ["bin/", "dist/"];
-const requiredFiles = ["package.json", "README.md", "LICENSE"];
+const requiredFiles = ["package.json", "README.md", "LICENSE", "scripts/verify-opentui-runtime.mjs"];
+const allowedScriptFiles = new Set(["scripts/verify-opentui-runtime.mjs"]);
 const forbiddenPrefixes = ["src/", "tests/", "node_modules/", ".ccflow/", ".claude/", ".codex/", "openspec/", "prototypes/", "scratch/", "dist-test/"];
 const forbiddenFiles = ["nohup.out"];
 
@@ -30,6 +31,7 @@ for (const prefix of requiredPrefixes) {
 }
 for (const file of files) {
   if (forbiddenFiles.includes(file)) failures.push(`forbidden file included: ${file}`);
+  if (file.startsWith("scripts/") && !allowedScriptFiles.has(file)) failures.push(`forbidden script included: ${file}`);
   if (forbiddenPrefixes.some((prefix) => file.startsWith(prefix))) failures.push(`forbidden path included: ${file}`);
 }
 

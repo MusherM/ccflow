@@ -173,7 +173,7 @@ async function runDoctor(parsed: ParsedArgs, cwd: string, out: (value: string) =
     await assertTuiRuntimeAvailable();
     add("ok", "OpenTUI runtime dependency is available");
   } catch (error) {
-    add("warn", `${formatError(error)}; basic Node TUI fallback will be used`);
+    add("error", formatError(error));
   }
 
   const repo = resolveRepository({ startPath: cwd, repoPath: parsed.repoPath });

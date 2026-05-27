@@ -15,6 +15,9 @@ export interface RunAppOptions {
 
 export async function runCcflowApp(options: RunAppOptions = {}): Promise<void> {
   assertSupportedNodeVersion(options.nodeVersion);
+  if (!options.startTui) {
+    await assertTuiRuntimeAvailable();
+  }
   const git = new GitAdapter();
   const resolution = resolveRepository({ startPath: options.cwd, repoPath: options.repoPath, git });
   if (!resolution.repoRoot) {
@@ -39,7 +42,7 @@ export async function runCcflowApp(options: RunAppOptions = {}): Promise<void> {
     await options.startTui(state, { config: loadedConfig.config });
     return;
   }
-  await runBestAvailableTui(state, loadedConfig.config);
+  await runTui(state, loadedConfig.config);
 }
 
 export function applyConfigToState(state: CcflowState, config: CcflowConfig): void {
@@ -59,18 +62,15 @@ export async function assertTuiRuntimeAvailable(): Promise<void> {
   try {
     await import("@opentui/core");
   } catch (error) {
-    throw new Error(`Unable to load OpenTUI runtime dependency: ${error instanceof Error ? error.message : String(error)}`);
+    const reason = (error instanceof Error ? error.message : String(error)).replace(/[.。]\s*$/, "");
+    throw new Error(
+      `Unable to load OpenTUI runtime dependency: ${reason}. ` +
+      "CCFlow does not provide a basic TUI fallback; install Bun on PATH or use a Node.js build with node:ffi support.",
+    );
   }
 }
 
-async function runBestAvailableTui(state: CcflowState, config: CcflowConfig): Promise<void> {
-  try {
-    const { runCcflowTui } = await import("./tui.js");
-    await runCcflowTui(state, { config });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!/bun-ffi-structs|OpenTUI|ffi|@opentui/i.test(message)) throw error;
-    const { runBasicTui } = await import("./tui-basic.js");
-    await runBasicTui(state, { config, reason: message });
-  }
+async function runTui(state: CcflowState, config: CcflowConfig): Promise<void> {
+  const { runCcflowTui } = await import("./tui.js");
+  await runCcflowTui(state, { config });
 }
