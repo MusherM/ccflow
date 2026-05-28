@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ClaudeAdapter } from "../src/core/claude.js";
+import { ClaudeAdapter, type HeadlessRunOptions } from "../src/core/claude.js";
+import type { CcflowConfig } from "../src/core/config.js";
 import { GitAdapter, branchNameForNode, worktreeIdFromBranch, worktreePathForBranch } from "../src/core/git.js";
 import {
   assertGraphInvariants,
@@ -39,6 +40,30 @@ test("creating the next leaf delegates the dirty-worktree commit to Claude Code"
   assert.equal(git.hasDirtyChanges(repoRoot), false);
   assert.notEqual(git.currentCommit(repoRoot), beforeCommit);
   assert.ok(git.lastCommitMessage(repoRoot).length > 0);
+  assertGraphInvariants(state);
+});
+
+test("dirty Tab resumes the parent Claude session for commit and leaves child session clean", async () => {
+  const { state, repoRoot } = createRepoState();
+  const git = new GitAdapter();
+  const parent = getNode(state, state.currentNodeId);
+  parent.cc.sessionId = "parent-session";
+  parent.cc.resumeMode = "resume";
+  fs.appendFileSync(path.join(repoRoot, "README.md"), "dirty parent session work\n");
+
+  const claude = new RecordingClaudeAdapter();
+  const runner = new JobRunner(git, claude);
+  const child = await runner.createNextNode(state, parent.id);
+  await waitFor(() => getNode(state, parent.id).status === "sealed");
+
+  assert.equal(claude.calls.length, 1);
+  assert.equal(claude.calls[0]?.options.resumeSessionId, "parent-session");
+  assert.equal(getNode(state, parent.id).cc.sessionId, "parent-session");
+  assert.equal(getNode(state, parent.id).cc.resumeMode, "resume");
+  assert.equal(getNode(state, child.id).status, "LeafNew");
+  assert.equal(getNode(state, child.id).cc.sessionId, null);
+  assert.equal(getNode(state, child.id).cc.resumeMode, "new");
+  assert.equal(git.hasDirtyChanges(repoRoot), false);
   assertGraphInvariants(state);
 });
 
@@ -355,4 +380,19 @@ async function waitFor(predicate: () => boolean): Promise<void> {
     await new Promise<void>((resolve) => setTimeout(resolve, 10));
   }
   assert.equal(predicate(), true);
+}
+
+class RecordingClaudeAdapter extends ClaudeAdapter {
+  calls: Array<{ repoRoot: string; prompt: string; cwd: string; options: HeadlessRunOptions }> = [];
+
+  override runHeadless(
+    repoRoot: string,
+    prompt: string,
+    cwd: string,
+    _config?: CcflowConfig,
+    options: HeadlessRunOptions = {},
+  ): { ok: boolean; stdout: string; stderr: string } {
+    this.calls.push({ repoRoot, prompt, cwd, options });
+    return { ok: true, stdout: "", stderr: "" };
+  }
 }

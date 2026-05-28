@@ -100,7 +100,9 @@ export class JobRunner {
         worktreePath: worktree.path,
         promptLength: prompt.length,
       });
-      const result = this.claude.runHeadless(state.repoRoot, prompt, worktree.path, loadedConfig.config);
+      const result = this.claude.runHeadless(state.repoRoot, prompt, worktree.path, loadedConfig.config, {
+        resumeSessionId: node.cc.sessionId,
+      });
       logEvent(state.repoRoot, "commit-leaf:claude-done", {
         nodeId: node.id,
         ok: result.ok,

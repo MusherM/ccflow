@@ -14,6 +14,10 @@ import {
   resetTerminalForChildProcess,
 } from "./terminal.js";
 
+export interface HeadlessRunOptions {
+  resumeSessionId?: string | null;
+}
+
 /* node:coverage disable */
 function interactiveCommandFor(node: CcflowNode, config?: CcflowConfig): { bin: string; args: string[] } {
   const claudeBin = config?.claude.bin ?? process.env.CCFLOW_CLAUDE_BIN ?? "claude";
@@ -34,6 +38,7 @@ export class ClaudeAdapter {
     config?: CcflowConfig,
   ): Promise<{ sessionId: string | null; alive: boolean }> {
     const command = interactiveCommandFor(node, config);
+    let launchedAtMs = Date.now();
 
     await quarantineTerminalInput();
     releaseStdinForChildProcess();
@@ -41,6 +46,7 @@ export class ClaudeAdapter {
     const signalListenerCountsBefore = countSignalListeners(["SIGINT"]);
     const restoreProcessSignals = ignoreProcessSignalsForChildProcess(undefined, { restoreExisting: false });
     try {
+      launchedAtMs = Date.now();
       logEvent(repoRoot, "claude:interactive:start", {
         nodeId: node.id,
         bin: command.bin,
@@ -95,7 +101,7 @@ export class ClaudeAdapter {
       });
     }
 
-    const sessionId = this.findRecentClaudeSessionId(cwd) ?? node.cc.sessionId;
+    const sessionId = this.findRecentClaudeSessionId(cwd, { afterMs: launchedAtMs }) ?? node.cc.sessionId;
     logEvent(repoRoot, "claude:interactive:session-detected", {
       nodeId: node.id,
       cwd,
@@ -105,7 +111,13 @@ export class ClaudeAdapter {
   }
   /* node:coverage enable */
 
-  runHeadless(repoRoot: string, prompt: string, cwd: string, config?: CcflowConfig): { ok: boolean; stdout: string; stderr: string } {
+  runHeadless(
+    repoRoot: string,
+    prompt: string,
+    cwd: string,
+    config?: CcflowConfig,
+    options: HeadlessRunOptions = {},
+  ): { ok: boolean; stdout: string; stderr: string } {
     if (config?.claude.disableJobs || process.env.CCFLOW_DISABLE_CLAUDE_JOBS === "1") {
       return { ok: false, stdout: "", stderr: "Claude jobs are disabled by CCFLOW_DISABLE_CLAUDE_JOBS." };
     }
@@ -113,18 +125,24 @@ export class ClaudeAdapter {
     const claudeBin = config?.claude.bin ?? process.env.CCFLOW_CLAUDE_BIN ?? "claude";
     const extraArgs = config?.claude.headlessArgs ?? splitShellWords(process.env.CCFLOW_CLAUDE_ARGS ?? "");
     const model = config?.claude.model ?? "haiku";
+    const resumeArgs = options.resumeSessionId ? ["--resume", options.resumeSessionId] : [];
     logEvent(repoRoot, "claude:headless:start", {
       bin: claudeBin,
       cwd,
       promptLength: prompt.length,
       promptPreview: prompt.slice(0, 500),
+      resumeSessionId: options.resumeSessionId ?? null,
     });
-    const result = spawnSync(claudeBin, [...extraArgs, "-p", prompt, "--permission-mode", "bypassPermissions", "--output-format", "json", "--model", model], {
-      cwd,
-      encoding: "utf8",
-      stdio: "pipe",
-      env: process.env,
-    });
+    const result = spawnSync(
+      claudeBin,
+      [...extraArgs, "-p", prompt, ...resumeArgs, "--permission-mode", "bypassPermissions", "--output-format", "json", "--model", model],
+      {
+        cwd,
+        encoding: "utf8",
+        stdio: "pipe",
+        env: process.env,
+      },
+    );
     if (result.error) {
       logEvent(repoRoot, "claude:headless:error", {
         cwd,
@@ -148,7 +166,7 @@ export class ClaudeAdapter {
     };
   }
 
-  private findRecentClaudeSessionId(cwd: string): string | null {
+  private findRecentClaudeSessionId(cwd: string, options: { afterMs?: number } = {}): string | null {
     const root = path.join(os.homedir(), ".claude", "projects");
     if (!fs.existsSync(root)) return null;
     const projectDirs = fs.readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory());
@@ -161,6 +179,7 @@ export class ClaudeAdapter {
           .map((file) => path.join(dir, file.name));
       })
       .map((file) => ({ file, mtime: fs.statSync(file).mtimeMs }))
+      .filter((candidate) => options.afterMs === undefined || candidate.mtime >= options.afterMs)
       .sort((a, b) => b.mtime - a.mtime)
       .slice(0, 20);
 

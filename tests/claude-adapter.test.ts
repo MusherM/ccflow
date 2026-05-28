@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ClaudeAdapter } from "../src/core/claude.js";
+import { defaultCcflowConfig } from "../src/core/config.js";
 
 test("ClaudeAdapter reports disabled and spawn-error headless runs without mutating settings", () => {
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-claude-adapter-"));
@@ -36,6 +37,50 @@ test("ClaudeAdapter reports disabled and spawn-error headless runs without mutat
   }
 });
 
+test("ClaudeAdapter can run headless prompts inside an existing Claude session", () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-claude-resume-"));
+  const script = path.join(repoRoot, "capture-args.mjs");
+  const capture = path.join(repoRoot, "args.json");
+  fs.writeFileSync(
+    script,
+    [
+      "import fs from 'node:fs';",
+      "fs.writeFileSync(process.env.CCFLOW_CAPTURE_ARGS, JSON.stringify(process.argv.slice(2)));",
+      "process.stdout.write(JSON.stringify({ session_id: 'parent-session' }));",
+    ].join("\n"),
+  );
+
+  const config = defaultCcflowConfig();
+  config.claude.bin = process.execPath;
+  config.claude.headlessArgs = [script];
+  config.claude.model = "test-model";
+
+  const previousCapture = process.env.CCFLOW_CAPTURE_ARGS;
+  process.env.CCFLOW_CAPTURE_ARGS = capture;
+  try {
+    const result = new ClaudeAdapter().runHeadless(repoRoot, "commit prompt", repoRoot, config, {
+      resumeSessionId: "parent-session",
+    });
+
+    assert.equal(result.ok, true);
+    const args = JSON.parse(fs.readFileSync(capture, "utf8")) as string[];
+    assert.deepEqual(args, [
+      "-p",
+      "commit prompt",
+      "--resume",
+      "parent-session",
+      "--permission-mode",
+      "bypassPermissions",
+      "--output-format",
+      "json",
+      "--model",
+      "test-model",
+    ]);
+  } finally {
+    restoreEnv("CCFLOW_CAPTURE_ARGS", previousCapture);
+  }
+});
+
 test("ClaudeAdapter resolves the newest matching Claude session id from project logs", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-claude-home-"));
   const cwd = path.join(home, "repo");
@@ -60,9 +105,12 @@ test("ClaudeAdapter resolves the newest matching Claude session id from project 
   process.env.HOME = home;
   try {
     const adapter = new ClaudeAdapter() as unknown as {
-      findRecentClaudeSessionId(cwd: string): string | null;
+      findRecentClaudeSessionId(cwd: string, options?: { afterMs?: number }): string | null;
     };
     assert.equal(adapter.findRecentClaudeSessionId(cwd), "matching-session");
+    const sessionLogMtime = fs.statSync(path.join(projectDir, "new.jsonl")).mtimeMs;
+    assert.equal(adapter.findRecentClaudeSessionId(cwd, { afterMs: sessionLogMtime + 1 }), null);
+    assert.equal(adapter.findRecentClaudeSessionId(cwd, { afterMs: sessionLogMtime - 1 }), "matching-session");
     assert.equal(adapter.findRecentClaudeSessionId(path.join(home, "missing")), null);
 
     fs.rmSync(path.join(home, ".claude"), { recursive: true, force: true });
