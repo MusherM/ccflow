@@ -55,7 +55,7 @@ The package install runs an OpenTUI runtime check. Installation fails when neith
 2. Install CCFlow globally.
 
    ```bash
-   npm install -g @musher/ccflow
+   npm install -g @musherm/ccflow
    ccflow --version
    ccflow doctor
    ```

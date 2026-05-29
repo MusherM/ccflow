@@ -1,5 +1,5 @@
 {
-  "name": "@musher/ccflow",
+  "name": "@musherm/ccflow",
   "version": "0.1.3",
   "description": "Node-based Claude Code workflow manager for Git DAG and worktree sessions.",
   "license": "MIT",

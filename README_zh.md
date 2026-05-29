@@ -55,7 +55,7 @@ CCFlow 是一个 **节点式 Claude Code 会话管理器**。在 CCFlow 中，�
 2. 全局安装 CCFlow。
 
    ```bash
-   npm install -g @musher/ccflow
+   npm install -g @musherm/ccflow
    ccflow --version
    ccflow doctor
    ```
