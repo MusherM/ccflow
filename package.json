@@ -5,7 +5,7 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "ccflow": "./bin/ccflow.js"
+    "ccflow": "bin/ccflow.js"
   },
   "files": [
     "assets/ccflow-intro.png",
@@ -23,7 +23,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lxy/ccflow.git"
+    "url": "git+https://github.com/MusherM/ccflow.git"
   },
   "keywords": [
     "claude-code",

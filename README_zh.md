@@ -41,8 +41,6 @@ CCFlow 是一个 **节点式 Claude Code 会话管理器**。在 CCFlow 中，�
 
 ## 安装
 
-CCFlow 0.1.0 目前建议通过本仓库生成的 npm tarball 安装。
-
 1. 先安装 Bun。
 
    macOS 和 Linux：
@@ -54,31 +52,13 @@ CCFlow 0.1.0 目前建议通过本仓库生成的 npm tarball 安装。
 
    也可以使用 Homebrew 或其他包管理器安装 Bun，只要 `bun` 命令最终在 `PATH` 中可用即可。
 
-2. 克隆仓库并安装开发依赖。
+2. 全局安装 CCFlow。
 
    ```bash
-   git clone https://github.com/lxy/ccflow.git
-   cd ccflow
-   npm install
-   ```
-
-3. 生成 npm tarball。
-
-   ```bash
-   npm pack
-   ```
-
-   `npm pack` 会执行 package 的 `prepack` 脚本，构建 `dist/`，并在仓库根目录生成 `ccflow-0.1.0.tgz`。
-
-4. 全局安装生成的 tarball。
-
-   ```bash
-   npm install -g ./ccflow-0.1.0.tgz
+   npm install -g ccflow
    ccflow --version
    ccflow doctor
    ```
-
-   修改源码后，如果希望全局安装的 CLI 也使用新代码，需要重新运行 `npm pack` 并再次安装生成的 tarball。
 
 ## 首次运行
 
@@ -273,27 +253,3 @@ CCFlow 会保留不可覆盖的 commit 和 merge job kernel instructions。这�
 ccflow config prompt commit
 ccflow config prompt merge
 ```
-
-## 发布验证
-
-普通代码更新只需要正常 Git push。GitHub Actions 会运行类型检查和 package 内容校验，但不会发布到 npm：
-
-```bash
-git push
-```
-
-要发布正式 npm 版本，选择版本号升级类型并推送生成的 tag：
-
-```bash
-npm run release:patch
-```
-
-如果不是 patch 版本，可以使用 `npm run release:minor` 或 `npm run release:major`。推送的 `vX.Y.Z` tag 会触发 npm 发布 workflow，且 workflow 会拒绝 tag 与 `package.json` 版本不一致，或版本号不高于 npm 已发布最高版本的发布。
-
-手动发布前，仍然可以运行完整的本地验证：
-
-```bash
-npm run verify:release
-```
-
-该命令会构建运行时产物、运行测试、检查 package 内容、在隔离的 global prefix 中安装生成的 tarball，并验证安装后的 `ccflow` 命令。

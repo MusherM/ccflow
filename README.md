@@ -41,8 +41,6 @@ The package install runs an OpenTUI runtime check. Installation fails when neith
 
 ## Install
 
-CCFlow 0.1.0 is intended to be installed from the package tarball produced by this repository.
-
 1. Install Bun first.
 
    macOS and Linux:
@@ -54,31 +52,13 @@ CCFlow 0.1.0 is intended to be installed from the package tarball produced by th
 
    You can also install Bun with Homebrew or another package manager as long as `bun` is available on `PATH`.
 
-2. Clone the repository and install development dependencies.
+2. Install CCFlow globally.
 
    ```bash
-   git clone https://github.com/lxy/ccflow.git
-   cd ccflow
-   npm install
-   ```
-
-3. Build the npm tarball.
-
-   ```bash
-   npm pack
-   ```
-
-   `npm pack` runs the package `prepack` script, builds `dist/`, and creates `ccflow-0.1.0.tgz` in the repository root.
-
-4. Install the generated tarball globally.
-
-   ```bash
-   npm install -g ./ccflow-0.1.0.tgz
+   npm install -g ccflow
    ccflow --version
    ccflow doctor
    ```
-
-   Re-run `npm pack` and the global tarball install after changing source code that should be reflected in the installed CLI.
 
 ## First Run
 
@@ -273,27 +253,3 @@ Inspect the effective prompt without launching Claude Code:
 ccflow config prompt commit
 ccflow config prompt merge
 ```
-
-## Release Verification
-
-Normal code updates only need a regular Git push. GitHub Actions will run typecheck and package-content verification, but will not publish to npm:
-
-```bash
-git push
-```
-
-To publish a formal npm version, choose the version bump and push the generated tag:
-
-```bash
-npm run release:patch
-```
-
-Use `npm run release:minor` or `npm run release:major` when the release is larger than a patch. The pushed `vX.Y.Z` tag triggers the npm publish workflow, and the workflow rejects the release if the tag does not match `package.json` or if the version is not greater than the highest version already published to npm.
-
-Before publishing manually, you can still run the full local verification:
-
-```bash
-npm run verify:release
-```
-
-This builds runtime artifacts, runs tests, checks package contents, installs the generated tarball into an isolated global prefix, and verifies the installed `ccflow` command.
