@@ -8,10 +8,13 @@
     "ccflow": "./bin/ccflow.js"
   },
   "files": [
+    "assets/ccflow-intro.png",
+    "assets/ccflow-logo.png",
     "bin",
     "dist",
     "scripts/verify-opentui-runtime.mjs",
     "README.md",
+    "README_zh.md",
     "LICENSE"
   ],
   "engines": {

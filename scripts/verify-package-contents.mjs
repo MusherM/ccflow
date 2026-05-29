@@ -17,7 +17,7 @@ if (result.status !== 0) {
 const parsed = JSON.parse(result.stdout);
 const files = parsed[0].files.map((file) => file.path).sort();
 const requiredPrefixes = ["bin/", "dist/"];
-const requiredFiles = ["package.json", "README.md", "LICENSE", "scripts/verify-opentui-runtime.mjs"];
+const requiredFiles = ["package.json", "README.md", "README_zh.md", "LICENSE", "assets/ccflow-intro.png", "assets/ccflow-logo.png", "scripts/verify-opentui-runtime.mjs"];
 const allowedScriptFiles = new Set(["scripts/verify-opentui-runtime.mjs"]);
 const forbiddenPrefixes = ["src/", "tests/", "node_modules/", ".ccflow/", ".claude/", ".codex/", "openspec/", "prototypes/", "scratch/", "dist-test/"];
 const forbiddenFiles = ["nohup.out"];
