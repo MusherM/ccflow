@@ -276,7 +276,21 @@ ccflow config prompt merge
 
 ## Release Verification
 
-Before publishing:
+Normal code updates only need a regular Git push. GitHub Actions will run typecheck and package-content verification, but will not publish to npm:
+
+```bash
+git push
+```
+
+To publish a formal npm version, choose the version bump and push the generated tag:
+
+```bash
+npm run release:patch
+```
+
+Use `npm run release:minor` or `npm run release:major` when the release is larger than a patch. The pushed `vX.Y.Z` tag triggers the npm publish workflow, and the workflow rejects the release if the tag does not match `package.json` or if the version is not greater than the highest version already published to npm.
+
+Before publishing manually, you can still run the full local verification:
 
 ```bash
 npm run verify:release

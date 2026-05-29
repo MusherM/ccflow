@@ -39,6 +39,7 @@ src/
 **状态流**：main.ts → cli.ts 解析命令 → app.ts/repo.ts 解析仓库与配置 → normalizeAfterBoot 清理进程残留 → TUI 处理所有交互（node 创建、切换、commit、merge、delete）→ storage.ts 持久化。
 
 **不变量**（graph.ts:assertGraphInvariants）：
+
 - 只有 leaf 节点可继续工作
 - internal 节点必有 commit 且 status 为 sealed
 - 正好一个 worktree 是 current
@@ -47,7 +48,7 @@ src/
 ## 规则
 
 - 永远用中文回复用户。
-- 核心工作流、TUI 交互、架构或数据模型变化时，必须同步更新 `README.md`。
+- 核心工作流、TUI 交互、架构或数据模型变化时，必须同步更新 `CLAUDE.md`。
 - 每当更新 `README.md` 时，必须同步更新 `README_zh.md`，保持英文和中文 README 的安装、首次运行、命令、配置和发布说明语义一致。
 - CCFlow 不提供 basic TUI fallback；安装和启动都必须让 OpenTUI 可用，优先通过 `bun` 运行发布入口。
 - `src/core/graph.ts` 中的不变量是系统边界，修改前先补测试。
