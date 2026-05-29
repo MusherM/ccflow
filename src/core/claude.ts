@@ -7,6 +7,7 @@ import type { CcflowConfig } from "./config.js";
 import { splitShellWords } from "./config.js";
 import { logEvent } from "./log.js";
 import {
+  drainTerminalInputBuffer,
   drainProcessSignalsForChildProcess,
   ignoreProcessSignalsForChildProcess,
   quarantineTerminalInput,
@@ -40,8 +41,9 @@ export class ClaudeAdapter {
     const command = interactiveCommandFor(node, config);
     let launchedAtMs = Date.now();
 
-    await quarantineTerminalInput();
+    // Do not timed-quarantine before launch; IMEs may commit user text during the handoff.
     releaseStdinForChildProcess();
+    drainTerminalInputBuffer();
     resetTerminalForChildProcess();
     const signalListenerCountsBefore = countSignalListeners(["SIGINT"]);
     const restoreProcessSignals = ignoreProcessSignalsForChildProcess(undefined, { restoreExisting: false });

@@ -20,6 +20,7 @@ import {
 import { JobRunner } from "../src/core/jobs.js";
 import { runCommand, tryCommand } from "../src/core/shell.js";
 import {
+  drainTerminalInputBuffer,
   drainProcessSignalsForChildProcess,
   ignoreProcessSignalsForChildProcess,
   quarantineTerminalInput,
@@ -48,7 +49,7 @@ test("shell helpers report success, command failure, and spawn errors", () => {
   );
 });
 
-test("terminal helpers reset tty output, release stdin, and quarantine buffered bytes", async () => {
+test("terminal helpers reset tty output, release stdin, drain buffers, and quarantine buffered bytes", async () => {
   let output = "";
   resetTerminalForChildProcess({ isTTY: false, write: () => { throw new Error("should not write"); } } as never);
   resetTerminalForChildProcess({ isTTY: true, write: (data: string) => { output += data; return true; } } as never);
@@ -60,6 +61,10 @@ test("terminal helpers reset tty output, release stdin, and quarantine buffered 
   assert.equal(input.listenerCount("data"), 0);
   assert.equal(input.paused, true);
   assert.equal(input.rawModes.at(-1), false);
+
+  input.reads.push(Buffer.from("pending-before-child"));
+  drainTerminalInputBuffer(input as never);
+  assert.equal(input.reads.length, 0);
 
   input.isRaw = true;
   input.reads.push(Buffer.from("pending"));

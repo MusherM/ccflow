@@ -32,6 +32,11 @@ export function releaseStdinForChildProcess(input: ReadStream = process.stdin): 
   input.pause();
 }
 
+export function drainTerminalInputBuffer(input: ReadStream = process.stdin): void {
+  if (!input.isTTY) return;
+  while (input.read() !== null) {}
+}
+
 export function ignoreProcessSignalsForChildProcess(
   signals: NodeJS.Signals[] = childOwnedSignals,
   options: { restoreExisting?: boolean } = {},
@@ -81,7 +86,7 @@ export async function quarantineTerminalInput(
   await new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, durationMs)));
 
   input.off("data", discard);
-  while (input.read() !== null) {}
+  drainTerminalInputBuffer(input);
   if (input.setRawMode) input.setRawMode(previousRawMode);
   if (!previousRawMode) input.pause();
 }

@@ -12,7 +12,7 @@ import { getNode, getWorktree, isEditableLeaf, isLeafNode, isOperationBlockedNod
 import { JobRunner } from "./core/jobs.js";
 import { logEvent } from "./core/log.js";
 import { saveSession, saveState } from "./core/storage.js";
-import { quarantineTerminalInput, releaseStdinForChildProcess, resetTerminalForChildProcess } from "./core/terminal.js";
+import { drainTerminalInputBuffer, releaseStdinForChildProcess, resetTerminalForChildProcess } from "./core/terminal.js";
 import {
   buildEdgeLayer,
   chooseExistingFocusId,
@@ -165,8 +165,8 @@ async function runGraphOnce(
       renderer.destroy();
       await destroyed;
       resetTerminalForChildProcess();
-      await quarantineTerminalInput();
       releaseStdinForChildProcess();
+      drainTerminalInputBuffer();
       resetTerminalForChildProcess();
       logEvent(state.repoRoot, "tui:graph:settle-done", {
         kind: result.kind,
