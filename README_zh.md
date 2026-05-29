@@ -6,7 +6,27 @@
   <img src="./assets/ccflow-logo.png" alt="CCFlow logo" width="220">
 </p>
 
-CCFlow 是面向 Claude Code 会话、Git commit 和 Git worktree 的终端工作流管理器。它把工作组织成节点图，让你从历史 commit 分支、合并叶子节点，并在正确的 worktree 中恢复 Claude Code 会话。
+## Why CCFlow？
+
+你是否有以下问题？
+
+打开 Claude Code，开始 coding，完成一个 feature 后，执行 `/commit`，或者自己手动 commit。然后 `/clear`，继续 coding。这个流程已经极度简化了，但有没有更好的方式？
+
+数个 feature 完成，甚至数个项目 coding 完成后，你发现这个项目里之前某个 feature 写得有点问题，想看看当时的 Claude Code 会话，但那个会话已经被淹没在一堆历史会话里了。
+
+什么是 worktree？我该怎么同时写两个 feature？
+
+如果你有以上问题，欢迎使用 CCFlow 来优化你的 Claude Code 工作流程。
+
+![CCFlow OpenTUI 节点图](./assets/ccflow-tui-node-graph.png)
+
+## CCFlow 是什么？
+
+CCFlow 是一个 **节点式 Claude Code 会话管理器**。在 CCFlow 中，节点即会话，节点即 commit。
+
+具体来说，在一个不涉及 worktree 开发，也就是不需要同时开发多个特性的场景下，你只需要启动 `ccflow`，在根节点中使用 `Enter` 进入 Claude Code，然后像平时使用 Claude Code 一样进行编码。编码完成后，使用两次 `Ctrl+C` 退出 Claude Code，即可回到节点管理页面。你只需要在这个节点上敲击 `Tab` 就可以新建一个节点。此时后台正在发生的是：CCFlow 正在调用你的 Claude Code CLI 进行自动化 commit，保存你上一轮的工作成果；与此同时，你可以正常进入新建的节点，获得一个干净的上下文并继续你的工作。自动 commit 完成后，你可以通过节点视图查看这个节点的 commit 信息，commit 信息会总结你在这个节点中的工作。
+
+在涉及 worktree 开发的场景下，你可以简单地通过在一个节点上敲击 `Shift+Tab` 新建一个同级节点。你可以在同级节点中同时进行工作，并在节点管理视图里使用空格键多选节点后按 `m` 进行合并。此时后台正在发生的是：CCFlow 调用你的 Claude Code CLI 对选中的多个节点进行 commit，并在所有节点 commit 完成后继续调用 Claude Code 进行自动化 merge。merge 完成后，CCFlow 会给你一个新的节点和干净的上下文，你可以继续你的工作。
 
 ![CCFlow 项目结构介绍图](./assets/ccflow-intro.png)
 

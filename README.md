@@ -6,7 +6,27 @@
   <img src="./assets/ccflow-logo.png" alt="CCFlow logo" width="220">
 </p>
 
-CCFlow is a terminal workflow manager for Claude Code sessions, Git commits, and Git worktrees. It lets you move through a node graph of work, branch from prior commits, merge leaves, and resume Claude Code sessions from the right worktree.
+## Why CCFlow?
+
+Do you recognize this workflow?
+
+Open Claude Code, start coding, finish a feature, then run `/commit` or commit manually. Run `/clear`, keep coding, and repeat. That flow is already streamlined, but is there a better way?
+
+After several features, or even after coding across several projects, you may realize an earlier feature has a problem. You want to inspect the Claude Code session from that moment, but the session is buried in a long history.
+
+What is a worktree? How should you work on two features at the same time?
+
+If these problems are familiar, CCFlow is designed to make your Claude Code workflow easier to navigate.
+
+![CCFlow OpenTUI node graph](./assets/ccflow-tui-node-graph.png)
+
+## What Is CCFlow?
+
+CCFlow is a **node-based Claude Code session manager**. In CCFlow, a node is a session, and a node is also a commit.
+
+In a workflow that does not need worktree-based parallel development, start `ccflow`, press `Enter` on the root node to enter Claude Code, and code as usual. When you finish that round of work, press `Ctrl+C` twice to leave Claude Code and return to the node manager. Press `Tab` on the current node to create the next node. Behind the scenes, CCFlow calls your Claude Code CLI to automatically commit the previous round of work while you can enter the new node with a clean context and continue. After the automated commit completes, the node view shows the commit information, including a summary of the work done in that node.
+
+In a worktree-based workflow, press `Shift+Tab` on a node to create a sibling node. Sibling nodes let you work on multiple features in parallel. In the node manager, press `Space` to select multiple nodes, then press `m` to merge them. Behind the scenes, CCFlow asks Claude Code to commit the selected nodes, waits for all commits to complete, then asks Claude Code to perform an automated merge. After the merge finishes, CCFlow gives you a new node and a clean context so you can keep working.
 
 ![CCFlow project map](./assets/ccflow-intro.png)
 

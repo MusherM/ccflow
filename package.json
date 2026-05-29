@@ -10,6 +10,7 @@
   "files": [
     "assets/ccflow-intro.png",
     "assets/ccflow-logo.png",
+    "assets/ccflow-tui-node-graph.png",
     "bin",
     "dist",
     "scripts/verify-opentui-runtime.mjs",

@@ -11,6 +11,7 @@ test("package metadata is publishable as an unscoped CLI package", () => {
   assert.equal(pkg.scripts.postinstall, "node scripts/verify-opentui-runtime.mjs");
   assert.ok(pkg.files.includes("assets/ccflow-intro.png"));
   assert.ok(pkg.files.includes("assets/ccflow-logo.png"));
+  assert.ok(pkg.files.includes("assets/ccflow-tui-node-graph.png"));
   assert.ok(pkg.files.includes("bin"));
   assert.ok(pkg.files.includes("dist"));
   assert.ok(pkg.files.includes("scripts/verify-opentui-runtime.mjs"));
