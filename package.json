@@ -1,6 +1,6 @@
 {
   "name": "ccflow",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Node-based Claude Code workflow manager for Git DAG and worktree sessions.",
   "license": "MIT",
   "type": "module",
