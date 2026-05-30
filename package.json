@@ -13,7 +13,6 @@
     "assets/ccflow-tui-node-graph.png",
     "bin",
     "dist",
-    "scripts/verify-opentui-runtime.mjs",
     "README.md",
     "README_zh.md",
     "LICENSE"
@@ -48,7 +47,6 @@
     "release:patch": "npm version patch && git push --follow-tags",
     "release:minor": "npm version minor && git push --follow-tags",
     "release:major": "npm version major && git push --follow-tags",
-    "postinstall": "node scripts/verify-opentui-runtime.mjs",
     "prepack": "npm run build",
     "proto:ink": "tsx --tsconfig prototypes/ink-node-view/tsconfig.json prototypes/ink-node-view/src/main.tsx",
     "proto:opentui": "bun run prototypes/opentui-node-view/src/main.ts",

@@ -37,7 +37,7 @@ In a worktree-based workflow, press `Shift+Tab` on a node to create a sibling no
 - Bun on `PATH` for the OpenTUI runtime
 - Claude Code CLI available as `claude`, or configured through CCFlow config
 
-The package install runs an OpenTUI runtime check. Installation fails when neither Bun nor a Node.js build with `node:ffi` support can load `@opentui/core`.
+CCFlow checks the OpenTUI runtime when it starts. If Bun is unavailable and the current Node.js build cannot load `@opentui/core`, startup fails with a runtime error.
 
 ## Install
 

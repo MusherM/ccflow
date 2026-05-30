@@ -50,7 +50,7 @@ src/
 - 永远用中文回复用户。
 - 核心工作流、TUI 交互、架构或数据模型变化时，必须同步更新 `CLAUDE.md`。
 - 每当更新 `README.md` 时，必须同步更新 `README_zh.md`，保持英文和中文 README 的安装、首次运行、命令、配置和发布说明语义一致。
-- CCFlow 不提供 basic TUI fallback；安装和启动都必须让 OpenTUI 可用，优先通过 `bun` 运行发布入口。
+- CCFlow 不提供 basic TUI fallback；启动时必须让 OpenTUI 可用，优先通过 `bun` 运行发布入口。
 - `src/core/graph.ts` 中的不变量是系统边界，修改前先补测试。
 - 所有涉及 Claude Code/cc 的测试必须走真实 cc 流程，不能用 fake/stub/mock 替代；需要直接在沙箱外运行测试，确保 `claude`/`cc` CLI 能被真实调用起来。
 - npm 发布相关修改必须保持 `package.json#files` 为显式白名单，并用 `npm run pack:dry-run` 检查 tarball 内容。

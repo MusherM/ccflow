@@ -37,7 +37,7 @@ CCFlow 是一个 **节点式 Claude Code 会话管理器**。在 CCFlow 中，�
 - `PATH` 中可用的 Bun，用于 OpenTUI 运行时
 - Claude Code CLI 可通过 `claude` 调用，或通过 CCFlow 配置指定
 
-包安装阶段会检查 OpenTUI 运行时。如果 Bun 不可用，并且当前 Node.js 也无法通过 `node:ffi` 加载 `@opentui/core`，安装会直接失败。
+CCFlow 会在启动时检查 OpenTUI 运行时。如果 Bun 不可用，并且当前 Node.js 也无法通过 `node:ffi` 加载 `@opentui/core`，启动会报运行时错误。
 
 ## 安装
 

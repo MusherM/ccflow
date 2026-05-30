@@ -6,7 +6,7 @@ on:
       - "v*.*.*"
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 jobs:
@@ -44,6 +44,30 @@ jobs:
 
       - name: Verify installable package
         run: npm run verify:install
+
+      - name: Pack GitHub release asset
+        run: |
+          mkdir -p release-artifacts
+          npm pack --pack-destination release-artifacts
+
+      - name: Prepare GitHub release notes
+        run: |
+          package_name="$(node -p "require('./package.json').name")"
+          {
+            echo "TODO: write changelog before publishing this release."
+            echo
+            echo "npm package: https://www.npmjs.com/package/${package_name}"
+          } > release-notes.md
+
+      - name: Create draft GitHub release
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release-artifacts/*.tgz --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release-artifacts/*.tgz --draft --verify-tag --title "$GITHUB_REF_NAME" --notes-file release-notes.md
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Publish to npm
         run: npm publish --access public --provenance
