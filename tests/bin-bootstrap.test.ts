@@ -6,6 +6,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 type BinBootstrapModule = {
+  isMainModule(scriptPath?: string, moduleUrl?: string): boolean;
   splitSearchPath(value: string, platform?: NodeJS.Platform): string[];
   normalizePathEntry(entry: string, env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform): string;
   collectSearchPathEntries(env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform): string[];
@@ -45,6 +46,18 @@ test("global bin applies PATHEXT during Windows Bun lookup", async () => {
     }),
     bunExe,
   );
+});
+
+test("global bin treats npm symlink shims as the main module", async () => {
+  const bootstrap = await loadBootstrapModule();
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-bin-main-"));
+  const target = path.join(temp, "ccflow.js");
+  const link = path.join(temp, "ccflow");
+  fs.writeFileSync(target, "");
+  fs.symlinkSync(target, link);
+
+  assert.equal(bootstrap.isMainModule(link, pathToFileURL(target).href), true);
+  assert.equal(bootstrap.isMainModule(link, pathToFileURL(fs.realpathSync(target)).href), true);
 });
 
 async function loadBootstrapModule(): Promise<BinBootstrapModule> {

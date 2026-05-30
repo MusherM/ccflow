@@ -150,6 +150,11 @@ function unique(values) {
   return [...new Set(values)];
 }
 
-function isMainModule() {
-  return process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+export function isMainModule(scriptPath = process.argv[1], moduleUrl = import.meta.url) {
+  if (!scriptPath) return false;
+  try {
+    return fs.realpathSync(fileURLToPath(moduleUrl)) === fs.realpathSync(scriptPath);
+  } catch {
+    return moduleUrl === pathToFileURL(path.resolve(scriptPath)).href;
+  }
 }
