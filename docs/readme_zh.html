@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CCFlow</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: #1a1a2e;
+      color: #e8e8e8;
+      line-height: 1.6;
+      padding: 32px 36px;
+    }
+    .logo { width: 72px; height: 72px; border-radius: 16px; margin-bottom: 12px; }
+    h1 {
+      font-size: 1.9em;
+      font-weight: 800;
+      background: linear-gradient(135deg, #00d9ff, #00ff88);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 4px;
+    }
+    .subtitle { color: #888; font-size: 0.95em; margin-bottom: 28px; }
+    h2 {
+      font-size: 1.1em;
+      color: #00ff88;
+      margin: 20px 0 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    p { margin-bottom: 12px; color: #b8b8c8; font-size: 0.92em; }
+    ul { margin: 8px 0 12px 20px; }
+    li { margin-bottom: 8px; color: #b8b8c8; font-size: 0.9em; }
+    .highlight {
+      background: linear-gradient(135deg, #00d9ff12, #00ff8812);
+      border-left: 3px solid #00ff88;
+      padding: 12px 16px;
+      border-radius: 0 10px 10px 0;
+      margin: 14px 0;
+    }
+    .highlight p { margin: 0; color: #c8c8d8; }
+    .tag-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0; }
+    .tag {
+      background: #00d9ff18;
+      color: #00d9ff;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.8em;
+    }
+    img {
+      width: 100%;
+      border-radius: 12px;
+      margin: 12px 0;
+      border: 1px solid #ffffff10;
+    }
+    .footer {
+      text-align: center;
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid #ffffff08;
+      color: #555;
+      font-size: 0.8em;
+    }
+  </style>
+</head>
+<body>
+  <img src="file:///Users/lixinyang/project/CCFlow/assets/ccflow-logo.png" class="logo" onerror="this.style.display='none'">
+  <h1>CCFlow</h1>
+  <p class="subtitle">节点式 Claude Code 会话管理器</p>
+
+  <h2>💡 解决什么问题？</h2>
+  <ul>
+    <li>Claude Code 会话越积越多，找不到之前那个精彩的对话</li>
+    <li>想回顾某个 feature 的开发过程，却只能翻历史记录</li>
+    <li>多 feature 并行开发时，切换分支来回操作太麻烦</li>
+  </ul>
+
+  <div class="highlight">
+    <p>CCFlow 把 Claude Code 的每一次会话变成一个「节点」，自动保存 commit，记录你的工作轨迹。</p>
+  </div>
+
+  <h2>✨ 能做什么？</h2>
+  <div class="tag-row">
+    <span class="tag">📍 节点即会话</span>
+    <span class="tag">🔄 自动 commit</span>
+    <span class="tag">🌲 可视化节点图</span>
+    <span class="tag">🔀 多分支合并</span>
+    <span class="tag">📝 智能 commit 信息</span>
+  </div>
+
+  <img src="file:///Users/lixinyang/project/CCFlow/assets/ccflow-tui-node-graph.png" onerror="this.replaceWith(this.cloneNode().removeAttribute('src'))">
+
+  <h2>🚀 快速开始</h2>
+  <p>在 Git 仓库中运行 <code>ccflow</code> 即可。</p>
+  <p>使用 <code>Tab</code> 新建节点 · <code>Shift+Tab</code> 新建分支 · <code>空格+m</code> 合并节点</p>
+
+  <div class="footer">CCFlow · 让 Claude Code 工作流井然有序</div>
+</body>
+</html>

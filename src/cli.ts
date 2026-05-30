@@ -9,6 +9,7 @@ import { initCcflowProject, resolveRepository, RepositoryError } from "./core/re
 import { statePath } from "./core/storage.js";
 import { renderPromptInspection } from "./core/prompts.js";
 import { assertSupportedNodeVersion, assertTuiRuntimeAvailable, runCcflowApp, type RunAppOptions } from "./app.js";
+import { runNodeSessionInCurrentTerminal } from "./core/node-session.js";
 
 export interface CliIO {
   stdout?: (value: string) => void;
@@ -31,6 +32,7 @@ interface ParsedArgs {
   gitInit: boolean;
   force: boolean;
   global: boolean;
+  nodeId?: string;
   cliConfig: PartialCcflowConfig;
 }
 
@@ -67,6 +69,8 @@ export async function runCli(argv = process.argv.slice(2), options: RunCliOption
         return runDoctor(parsed, cwd, out, env);
       case "config":
         return runConfig(parsed, cwd, out, env);
+      case "__node-session":
+        return runInternalNodeSession(parsed, cwd, env);
       default:
         err(`Unknown command: ${parsed.command}\n\n${helpText()}`);
         return 1;
@@ -128,8 +132,12 @@ function parseArgs(argv: string[]): ParsedArgs {
       parsed.cliConfig.claude = { ...(parsed.cliConfig.claude ?? {}), model: requireValue(argv, ++index, "--model") };
       continue;
     }
+    if (arg === "--node") {
+      parsed.nodeId = requireValue(argv, ++index, "--node");
+      continue;
+    }
     if (!parsed.command && !arg.startsWith("-")) {
-      if (["init", "doctor", "config"].includes(arg)) parsed.command = arg;
+      if (["init", "doctor", "config", "__node-session"].includes(arg)) parsed.command = arg;
       else parsed.repoPath = arg;
       continue;
     }
@@ -213,6 +221,18 @@ async function runDoctor(parsed: ParsedArgs, cwd: string, out: (value: string) =
   lines.push(`Summary: ${errors} error(s), ${warnings} warning(s)`);
   out(lines.join("\n"));
   return errors > 0 ? 1 : 0;
+}
+
+async function runInternalNodeSession(parsed: ParsedArgs, cwd: string, env: NodeJS.ProcessEnv): Promise<number> {
+  if (!parsed.nodeId) throw new Error("Usage: ccflow __node-session --repo <path> --node <node-id>");
+  const repo = resolveRepository({ startPath: cwd, repoPath: parsed.repoPath });
+  if (!repo.repoRoot) throw new RepositoryError("CCFlow node session requires a Git repository.");
+  const loaded = loadConfig({ repoRoot: repo.repoRoot, cliOverrides: parsed.cliConfig, env });
+  return runNodeSessionInCurrentTerminal({
+    repoRoot: repo.repoRoot,
+    nodeId: parsed.nodeId,
+    config: loaded.config,
+  });
 }
 
 function runConfig(parsed: ParsedArgs, cwd: string, out: (value: string) => void, env: NodeJS.ProcessEnv): number {

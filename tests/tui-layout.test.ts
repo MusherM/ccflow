@@ -4,6 +4,7 @@ import { createInitialState, sealLeafAndCreateChild } from "../src/core/graph.js
 import { emptyStats, type CcflowState } from "../src/core/types.js";
 import {
   chooseExistingFocusId,
+  buildEdgeLayer,
   ensureNodeVisible,
   GRAPH_NODE_HEIGHT,
   GRAPH_NODE_WIDTH,
@@ -65,6 +66,18 @@ test("graph viewport keeps partially visible nodes renderable", () => {
   assert.ok(visibleRoot);
   assert.equal(visibleRoot.x, -8);
   assert.equal(visibleRoot.y, -2);
+});
+
+test("graph edge layer draws and clips connectors between visible nodes", () => {
+  const state = createLinearState(2);
+  const positions = layoutGraph(state);
+  const layer = buildEdgeLayer(state, positions, 90, 18, { x: 0, y: 0 });
+
+  assert.match(layer, /-/);
+  assert.match(layer, />/);
+
+  const clipped = buildEdgeLayer(state, positions, 12, 3, { x: 40, y: 0 });
+  assert.equal(clipped.split("\n").length, 3);
 });
 
 function createLinearState(depth: number): CcflowState {

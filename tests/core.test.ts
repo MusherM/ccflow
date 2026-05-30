@@ -10,6 +10,11 @@ import {
   deleteLeafNode,
   failPendingParentCommit,
   finalizePendingParentCommit,
+  hasNodeStats,
+  isEditableLeaf,
+  isOperationBlockedNode,
+  isPrunableEmptyNode,
+  isSafeFocusTarget,
   nearestAncestorCommit,
   normalizeAfterBoot,
   sealLeafAndCreateChild,
@@ -591,5 +596,80 @@ test("forced leaf deletion can remove a leaf locked by an in-progress delete job
   assert.equal(result.focusId, "node_root");
   assert.equal(state.nodes.node_child, undefined);
   assert.equal(state.nodes.node_root?.type, "leaf");
+  assertGraphInvariants(state);
+});
+
+test("graph helper predicates cover prunable, blocked, editable, and focus-safe nodes", () => {
+  const state = createInitialState({
+    repoRoot: "/repo",
+    branch: "main",
+    commitHash: "abc123",
+    now: createdAt,
+    idFactory: (prefix) => `${prefix}_root`,
+  });
+  const root = state.nodes.node_root!;
+  assert.equal(hasNodeStats(root), false);
+  assert.equal(isEditableLeaf(state, root.id), true);
+  assert.equal(isSafeFocusTarget(state, "missing"), false);
+
+  root.stats.filesChanged = 1;
+  assert.equal(hasNodeStats(root), true);
+  root.stats.filesChanged = 0;
+
+  root.type = "internal";
+  root.status = "sealed";
+  root.children = ["node_empty"];
+  state.nodes.node_empty = {
+    ...root,
+    id: "node_empty",
+    title: "Empty",
+    type: "leaf",
+    parents: ["node_root"],
+    children: [],
+    git: { ...root.git, commitHash: null },
+    cc: { sessionId: null, processId: null, resumeMode: "new" },
+    stats: { filesChanged: 0, insertions: 0, deletions: 0, symbolsChanged: [] },
+    status: "LeafNew",
+    locked: false,
+    jobId: null,
+    pendingParentJobId: null,
+  };
+  assert.equal(isPrunableEmptyNode(state, "node_empty"), true);
+
+  const empty = state.nodes.node_empty!;
+  empty.cc.sessionId = "session";
+  assert.equal(isPrunableEmptyNode(state, "node_empty"), false);
+  empty.cc.sessionId = null;
+
+  empty.locked = true;
+  assert.equal(isOperationBlockedNode(state, "node_empty"), true);
+  assert.equal(isEditableLeaf(state, "node_empty"), false);
+  empty.locked = false;
+
+  state.worktrees.wt_main!.locked = true;
+  assert.equal(isOperationBlockedNode(state, "node_empty"), true);
+  state.worktrees.wt_main!.locked = false;
+
+  for (const status of ["AwaitingParentCommit", "ParentCommitting", "ParentCommitFailed", "CommitFailed", "JobFailed"] as const) {
+    empty.status = status;
+    assert.equal(isOperationBlockedNode(state, "node_empty"), true);
+  }
+});
+
+test("normalizeAfterBoot unlocks worktrees whose transient owner disappeared", () => {
+  const state = createInitialState({
+    repoRoot: "/repo",
+    branch: "main",
+    commitHash: "abc123",
+    now: createdAt,
+    idFactory: (prefix) => `${prefix}_root`,
+  });
+  state.worktrees.wt_main!.locked = true;
+  state.worktrees.wt_main!.status = "locked";
+
+  normalizeAfterBoot(state);
+
+  assert.equal(state.worktrees.wt_main?.locked, false);
+  assert.equal(state.worktrees.wt_main?.status, "current");
   assertGraphInvariants(state);
 });

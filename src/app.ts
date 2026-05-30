@@ -1,5 +1,6 @@
 import { GitAdapter } from "./core/git.js";
 import { loadConfig, type CcflowConfig, type PartialCcflowConfig } from "./core/config.js";
+import { reconcileNodeSessionState } from "./core/node-session.js";
 import { isCcflowInitialized, initCcflowProject, loadInitializedState, resolveRepository, RepositoryError } from "./core/repo.js";
 import { saveState } from "./core/storage.js";
 import type { CcflowState } from "./core/types.js";
@@ -36,6 +37,7 @@ export async function runCcflowApp(options: RunAppOptions = {}): Promise<void> {
 
   const state = loadInitializedState(resolution.repoRoot, git);
   applyConfigToState(state, loadedConfig.config);
+  reconcileNodeSessionState(state);
   saveState(state);
 
   if (options.startTui) {

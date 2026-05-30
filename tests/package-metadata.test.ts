@@ -2,11 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-test("package metadata is publishable as an unscoped CLI package", () => {
+test("package metadata is publishable as the scoped CLI package", () => {
   const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-  assert.equal(pkg.name, "ccflow");
+  assert.equal(pkg.name, "@musherm/ccflow");
   assert.equal(pkg.private, undefined);
-  assert.equal(pkg.bin.ccflow, "./bin/ccflow.js");
+  assert.equal(pkg.bin.ccflow, "bin/ccflow.js");
   assert.equal(pkg.publishConfig, undefined);
   assert.equal(pkg.scripts.postinstall, "node scripts/verify-opentui-runtime.mjs");
   assert.ok(pkg.files.includes("assets/ccflow-intro.png"));

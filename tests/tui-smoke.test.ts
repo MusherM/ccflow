@@ -11,7 +11,9 @@ import { loadOrInitState, saveState, statePath } from "../src/core/storage.js";
 import { emptyStats, type CcflowState } from "../src/core/types.js";
 import { claudeCliConfig, requirePython3, withClaudeSettingsSnapshot } from "./helpers/claude-cli.js";
 
-test("TUI delete key removes the current latest leaf and preserves one current worktree", async () => {
+const tuiSmokeTest = canRunOpenTuiRenderer() ? test : test.skip;
+
+tuiSmokeTest("TUI delete key removes the current latest leaf and preserves one current worktree", async () => {
   requirePython3();
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-tui-"));
   const git = new GitAdapter();
@@ -41,7 +43,7 @@ test("TUI delete key removes the current latest leaf and preserves one current w
   assert.equal(finalState.nodes[finalState.currentNodeId]?.type, "leaf");
 });
 
-test("TUI tab creates a new leaf and delegates README commit to Claude Code", async () => {
+tuiSmokeTest("TUI tab creates a new leaf and delegates README commit to Claude Code", async () => {
   requirePython3();
   const claude = claudeCliConfig();
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-tui-commit-"));
@@ -87,7 +89,7 @@ test("TUI tab creates a new leaf and delegates README commit to Claude Code", as
   assert.match(fs.readFileSync(path.join(repoRoot, "README.md"), "utf8"), /updated before Claude TUI commit/);
 });
 
-test("TUI shows blocked state instead of entering a pending child", () => {
+tuiSmokeTest("TUI shows blocked state instead of entering a pending child", () => {
   requirePython3();
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-tui-locked-"));
   const git = new GitAdapter();
@@ -117,7 +119,7 @@ test("TUI shows blocked state instead of entering a pending child", () => {
   assert.equal(finalState.nodes[child.id]?.status, "ParentCommitFailed");
 });
 
-test("TUI persists graph focus and pans the viewport to the focused node", () => {
+tuiSmokeTest("TUI persists graph focus and pans the viewport to the focused node", () => {
   requirePython3();
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-tui-viewport-"));
   const git = new GitAdapter();
@@ -191,6 +193,63 @@ function runTuiPty(
     },
     timeout,
   });
+}
+
+function canRunOpenTuiRenderer(): boolean {
+  const result = spawnSync("python3", ["-c", openTuiPreflightSource(), process.cwd()], {
+    encoding: "utf8",
+    timeout: 5000,
+    env: {
+      ...process.env,
+      TERM: process.env.TERM === "dumb" ? "xterm-256color" : (process.env.TERM ?? "xterm-256color"),
+    },
+  });
+  return result.status === 0;
+}
+
+function openTuiPreflightSource(): string {
+  return String.raw`
+import os
+import pty
+import select
+import signal
+import sys
+import time
+
+project_root = sys.argv[1]
+pid, master = pty.fork()
+if pid == 0:
+    os.chdir(project_root)
+    os.execvpe(
+        "bun",
+        ["bun", "-e", "const { createCliRenderer } = await import('@opentui/core'); const renderer = await createCliRenderer({ exitOnCtrlC: false, clearOnShutdown: true, screenMode: 'alternate-screen', targetFps: 1, consoleMode: 'disabled', useKittyKeyboard: false, useMouse: false, enableMouseMovement: false }); renderer.destroy();"],
+        {**os.environ, "TERM": os.environ.get("TERM") or "xterm-256color", "OPENTUI_GRAPHICS": "false"},
+    )
+
+deadline = time.time() + 3
+status = None
+while time.time() < deadline:
+    select.select([master], [], [], 0.05)
+    try:
+        waited_pid, raw_status = os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        status = 0
+        break
+    if waited_pid == pid:
+        if os.WIFEXITED(raw_status):
+            status = os.WEXITSTATUS(raw_status)
+        elif os.WIFSIGNALED(raw_status):
+            status = 128 + os.WTERMSIG(raw_status)
+        else:
+            status = 1
+        break
+
+if status is None:
+    os.kill(pid, signal.SIGTERM)
+    status = 1
+
+sys.exit(status)
+`;
 }
 
 function ptyDriverSource(): string {
@@ -315,10 +374,18 @@ completed_keys = True
 drain(0.8)
 for item in keys:
     if item["sequence"]:
-        os.write(master, item["sequence"].encode("utf-8"))
+        try:
+            os.write(master, item["sequence"].encode("utf-8"))
+        except OSError:
+            completed_keys = False
+            break
     if "injectSequence" in item:
         time.sleep(float(item.get("injectAfterMs", 0)) / 1000)
-        os.write(master, item["injectSequence"].encode("utf-8"))
+        try:
+            os.write(master, item["injectSequence"].encode("utf-8"))
+        except OSError:
+            completed_keys = False
+            break
     if "waitForNodeCount" in item:
         if not wait_for_state(item["waitForNodeCount"], float(item["delay"])):
             completed_keys = False

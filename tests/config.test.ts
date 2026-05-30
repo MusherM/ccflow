@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ConfigError, configWithSources, loadConfig, setUserGlobalConfigValue } from "../src/core/config.js";
+import { ConfigError, configWithSources, loadConfig, redactEffectiveConfig, setUserGlobalConfigValue } from "../src/core/config.js";
 
 test("config precedence merges nested objects and replaces arrays with source attribution", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-config-"));
@@ -66,6 +66,20 @@ test("config validation rejects unknown fields, shared local executables, and fu
     () => loadConfig({ repoRoot: root, env: { ...process.env, CCFLOW_CONFIG: path.join(root, "missing-global.json") } }),
     (error) => error instanceof ConfigError && /unknown config field nope/.test(error.message),
   );
+
+  const invalidJson = path.join(root, "invalid-global.json");
+  fs.writeFileSync(invalidJson, "{bad json\n");
+  assert.throws(
+    () => loadConfig({ repoRoot: undefined, env: { ...process.env, CCFLOW_CONFIG: invalidJson } }),
+    (error) => error instanceof ConfigError && /invalid JSON/.test(error.message),
+  );
+
+  const nonObject = path.join(root, "non-object-global.json");
+  fs.writeFileSync(nonObject, JSON.stringify(["not", "an", "object"]));
+  assert.throws(
+    () => loadConfig({ repoRoot: undefined, env: { ...process.env, CCFLOW_CONFIG: nonObject } }),
+    (error) => error instanceof ConfigError && /config must be a JSON object/.test(error.message),
+  );
 });
 
 test("legacy prompts are additive and new config can override prompt arrays", () => {
@@ -94,4 +108,16 @@ test("config set writes user global config and validates effective output", () =
   const loaded = loadConfig({ env: { ...process.env, CCFLOW_CONFIG: globalPath } });
   assert.deepEqual(loaded.config.prompts.commit.instructions, ["one", "two"]);
   assert.ok(JSON.stringify(configWithSources(loaded)).includes("prompts.commit.instructions"));
+});
+
+test("effective config redacts non-default Claude binary sources", () => {
+  const loaded = loadConfig({
+    env: {
+      ...process.env,
+      CCFLOW_CONFIG: path.join(os.tmpdir(), "ccflow-missing-global.json"),
+      CCFLOW_CLAUDE_BIN: "/private/tooling/claude",
+    },
+  });
+
+  assert.match(JSON.stringify(redactEffectiveConfig(loaded)), /<configured>/);
 });

@@ -63,3 +63,16 @@ test("prompt inspection renders without launching Claude", () => {
   assert.match(rendered, /Source attribution/);
   assert.match(rendered, /Preview instruction/);
 });
+
+test("merge prompt inspection renders built-in defaults when no custom source exists", () => {
+  const rendered = renderPromptInspection("merge", {
+    config: defaultCcflowConfig(),
+    paths: { userGlobalPath: "/home/user/.ccflowrc", xdgGlobalPath: "/home/user/.config/ccflow/config.json" },
+    files: [],
+    sources: {},
+  });
+
+  assert.match(rendered, /Effective merge prompt/);
+  assert.match(rendered, /built-in defaults only/);
+  assert.match(rendered, /UU example\.ts/);
+});

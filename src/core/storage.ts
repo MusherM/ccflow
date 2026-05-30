@@ -53,6 +53,12 @@ export function loadOrInitState(input: {
   return state;
 }
 
+export function loadState(repoRoot: string): CcflowState {
+  const state = JSON.parse(fs.readFileSync(statePath(repoRoot), "utf8")) as CcflowState;
+  assertGraphInvariants(state);
+  return state;
+}
+
 export function saveState(state: CcflowState): void {
   assertGraphInvariants(state);
   ensureCcflowDirs(state.repoRoot);

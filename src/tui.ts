@@ -7,11 +7,13 @@ import {
   type KeyEvent,
 } from "@opentui/core";
 import { ClaudeAdapter } from "./core/claude.js";
+import { defaultCcflowConfig } from "./core/config.js";
 import { GitAdapter } from "./core/git.js";
 import { getNode, getWorktree, isEditableLeaf, isLeafNode, isOperationBlockedNode, isSafeFocusTarget, switchCurrentWorktree } from "./core/graph.js";
 import { JobRunner } from "./core/jobs.js";
 import { logEvent } from "./core/log.js";
-import { saveSession, saveState } from "./core/storage.js";
+import { launchNodeSessionTab, reconcileNodeSessionState } from "./core/node-session.js";
+import { saveState } from "./core/storage.js";
 import { drainTerminalInputBuffer, releaseStdinForChildProcess, resetTerminalForChildProcess } from "./core/terminal.js";
 import {
   buildEdgeLayer,
@@ -74,7 +76,7 @@ export async function runCcflowTui(state: CcflowState, options: { config?: Ccflo
       currentWorktreeId: state.currentWorktreeId,
     });
     refreshDirtyStatuses(state, git);
-    const exit = await runGraphOnce(state, ui, jobs);
+    const exit = await runGraphOnce(state, ui, jobs, options.config);
     logEvent(state.repoRoot, "tui:graph:exit", {
       loop,
       kind: exit.kind,
@@ -83,7 +85,7 @@ export async function runCcflowTui(state: CcflowState, options: { config?: Ccflo
     });
     if (exit.kind === "quit") return;
     if (exit.kind === "enter" && exit.nodeId) {
-      await enterLeaf(state, exit.nodeId, claude, ui, options.config);
+      await enterLeaf(state, exit.nodeId, ui, options.config);
       logEvent(state.repoRoot, "tui:enter:return-to-loop", {
         loop,
         nodeId: exit.nodeId,
@@ -119,6 +121,7 @@ async function runGraphOnce(
   state: CcflowState,
   ui: UiState,
   jobs: JobRunner,
+  config?: CcflowConfig,
 ): Promise<TuiExit> {
   const previousOpenTuiGraphics = process.env.OPENTUI_GRAPHICS;
   process.env.OPENTUI_GRAPHICS = "false";
@@ -150,9 +153,12 @@ async function runGraphOnce(
   renderer.disableKittyKeyboard();
 
   let settled = false;
+  let sessionPoll: NodeJS.Timeout | null = null;
   const settle = (result: TuiExit) => {
     if (settled) return;
     settled = true;
+    if (sessionPoll) clearInterval(sessionPoll);
+    sessionPoll = null;
     logEvent(state.repoRoot, "tui:graph:settle-start", {
       kind: result.kind,
       nodeId: result.nodeId ?? null,
@@ -187,6 +193,11 @@ async function runGraphOnce(
     persistUiPreferences(state, ui);
     saveState(state);
   };
+  const reconcileAndSaveState = () => {
+    if (!reconcileNodeSessionState(state)) return false;
+    persistAndSaveState();
+    return true;
+  };
   const runAction = async (label: string, action: () => Promise<void> | void) => {
     if (ui.busy) return;
     ui.busy = true;
@@ -205,6 +216,12 @@ async function runGraphOnce(
       rerender();
     }
   };
+
+  sessionPoll = setInterval(() => {
+    if (settled) return;
+    if (reconcileAndSaveState()) rerender();
+  }, 2000);
+  sessionPoll.unref?.();
 
   renderer.keyInput.on("keypress", (key) => {
     if (key.ctrl && key.name === "c") {
@@ -263,6 +280,7 @@ async function runGraphOnce(
     if (ui.busy) return;
 
     if (key.name === "return" || key.name === "enter") {
+      reconcileAndSaveState();
       const node = ensureUiFocus(state, ui);
       if (!isLeafNode(state, node.id)) {
         ui.mode = "detail";
@@ -274,8 +292,9 @@ async function runGraphOnce(
         rerender();
         return;
       }
-      persistAndSaveState();
-      settle({ kind: "enter", nodeId: node.id });
+      void runAction("opening node tab...", async () => {
+        await enterLeaf(state, node.id, ui, config);
+      });
       return;
     }
 
@@ -384,7 +403,7 @@ async function runGraphOnce(
           ui.focusId = merge.id;
           ui.selectedIds.clear();
           if (merge.status === "MergeConflict") {
-            settle({ kind: "enter", nodeId: merge.id });
+            await enterLeaf(state, merge.id, ui, config);
             return;
           }
           ui.message = `Merge node ${merge.id}`;
@@ -404,6 +423,8 @@ async function runGraphOnce(
   renderer.on("resize", rerender);
   renderer.on("destroy", () => {
     if (!settled) {
+      if (sessionPoll) clearInterval(sessionPoll);
+      sessionPoll = null;
       logEvent(state.repoRoot, "tui:renderer:destroy-unexpected", {
         focusId: ui.focusId,
         currentNodeId: state.currentNodeId,
@@ -430,20 +451,11 @@ async function runGraphOnce(
 async function enterLeaf(
   state: CcflowState,
   nodeId: string,
-  claude: ClaudeAdapter,
   ui: UiState,
   config?: CcflowConfig,
 ): Promise<void> {
   const node = getNode(state, nodeId);
   const worktree = getWorktree(state, node.git.worktreeId);
-  if (state.settings.worktree.enterLeafAutoSwitch) {
-    switchCurrentWorktree(state, node.id);
-  }
-
-  node.status = "LeafRunning";
-  node.cc.resumeMode = node.cc.sessionId ? "resume" : "new";
-  node.updatedAt = new Date().toISOString();
-  saveState(state);
   logEvent(state.repoRoot, "tui:enter:start", {
     nodeId: node.id,
     worktreeId: worktree.id,
@@ -453,35 +465,25 @@ async function enterLeaf(
   });
 
   try {
-    const result = await claude.attachOrResume(node, worktree.path, state.repoRoot, config);
+    const result = await launchNodeSessionTab(state, node.id, config ?? defaultCcflowConfig());
     logEvent(state.repoRoot, "tui:enter:attached", {
       nodeId: node.id,
-      resultSessionId: result.sessionId,
-      alive: result.alive,
+      terminal: result.terminal,
     });
-    node.cc.sessionId = result.sessionId;
-    node.cc.processId = null;
-    node.cc.resumeMode = result.sessionId ? "resume" : "new";
-    node.status = result.sessionId ? "LeafResumable" : "LeafNew";
-    node.updatedAt = new Date().toISOString();
-    saveSession(state.repoRoot, node);
-    saveState(state);
     ui.focusId = node.id;
-    ui.message = "Claude session ended";
+    ui.message = `Opened ${node.id} in ${result.terminal === "iterm2" ? "iTerm2" : "Ghostty"} tab`;
     logEvent(state.repoRoot, "tui:enter:done", {
       nodeId: node.id,
       status: node.status,
       focusId: ui.focusId,
       sessionId: node.cc.sessionId,
+      terminal: result.terminal,
     });
   } catch (error) {
-    node.status = "JobFailed";
-    node.error = error instanceof Error ? error.message : String(error);
-    saveState(state);
-    ui.message = node.error ?? "Failed to enter Claude";
+    ui.message = error instanceof Error ? error.message : String(error);
     logEvent(state.repoRoot, "tui:enter:error", {
       nodeId: node.id,
-      error: node.error,
+      error: ui.message,
       focusId: ui.focusId,
     });
   }
@@ -693,7 +695,7 @@ function sidePanel(state: CcflowState, node: CcflowNode, ui: UiState) {
       worktree.locked ? "#7dd3fc" : worktree.status === "current" ? "#22c55e" : "#facc15",
     ),
     field("commit", node.git.commitHash?.slice(0, 12) ?? "none"),
-    field("cc", node.cc.sessionId ? "resumable" : "none"),
+    field("cc", node.status === "LeafRunning" ? "open tab" : node.cc.sessionId ? "resumable" : "none"),
     node.jobId ? field("job", node.jobId, "#7dd3fc") : null,
     node.pendingParentJobId ? field("parent job", node.pendingParentJobId, "#7dd3fc") : null,
     node.conflictFiles?.length ? field("conflicts", node.conflictFiles.join(", "), "#fb7185") : null,
@@ -763,7 +765,7 @@ function detailPanel(state: CcflowState, node: CcflowNode, width: number, height
     `parent job: ${node.pendingParentJobId ?? "none"}`,
     `blocked: ${node.blockedReason ?? "none"}`,
     `conflicts: ${node.conflictFiles?.join(", ") || "none"}`,
-    `cc launch: direct`,
+    `cc launch: new tab`,
     `files changed: ${node.stats.filesChanged}`,
     `insertions: ${node.stats.insertions}`,
     `deletions: ${node.stats.deletions}`,
@@ -804,7 +806,7 @@ function footer(ui: UiState) {
         ? `${ui.inputMode.prompt}${ui.inputValue}█`
         : ui.mode === "detail"
           ? "esc graph   q quit"
-          : "arrows/hjkl move   enter open/detail   tab next   shift+tab sibling   space select   m merge   s switch   d delete leaf   q quit",
+          : "arrows/hjkl move   enter tab/detail   tab next   shift+tab sibling   space select   m merge   s switch   d delete leaf   q quit",
       fg: ui.inputMode ? "#7dd3fc" : "#94a3b8",
     }),
   );
