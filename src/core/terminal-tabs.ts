@@ -53,6 +53,25 @@ export function currentCcflowCommand(
   return ["ccflow"];
 }
 
+export function resolveExecutable(
+  bin: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  if (path.isAbsolute(bin)) return bin;
+  if (bin.includes("/")) return bin;
+  const PATH = env.PATH ?? "";
+  for (const dir of PATH.split(path.delimiter)) {
+    if (!dir) continue;
+    try {
+      const fullPath = path.join(dir, bin);
+      if (fs.existsSync(fullPath)) return fullPath;
+    } catch {
+      // skip inaccessible directories
+    }
+  }
+  return bin;
+}
+
 export function buildNodeSessionCommand(input: NodeSessionCommandInput): string {
   const args = [
     ...(input.ccflowCommand ?? currentCcflowCommand()),
@@ -62,7 +81,7 @@ export function buildNodeSessionCommand(input: NodeSessionCommandInput): string 
     "--node",
     input.nodeId,
   ];
-  if (input.claudeBin) args.push("--claude-bin", input.claudeBin);
+  if (input.claudeBin) args.push("--claude-bin", resolveExecutable(input.claudeBin));
   if (input.model) args.push("--model", input.model);
   return args.map(shellQuote).join(" ");
 }
@@ -114,7 +133,12 @@ export function buildITerm2TabAppleScript(request: TerminalTabRequest): string {
 }
 
 export function buildGhosttyTabAppleScript(request: TerminalTabRequest): string {
-  const commandLiteral = appleScriptString(`shell:${request.command}`);
+  // Ghostty AppleScript API 的 command 属性会原样传递给 /bin/bash -c，
+  // 不支持配置文件的 shell: 前缀语法（shell: 会泄漏到命令名中导致执行失败）。
+  // 用 splitShellWords 将 shell-quoted 命令解析为原始参数后空格拼接，
+  // Ghostty 自带命令行解析，无需 shell quoting。
+  const rawCommand = splitShellWords(request.command).join(" ");
+  const commandLiteral = appleScriptString(rawCommand);
   const cwdLiteral = appleScriptString(request.cwd);
   return [
     'tell application "Ghostty"',
