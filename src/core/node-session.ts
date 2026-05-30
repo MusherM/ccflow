@@ -127,6 +127,7 @@ export async function launchNodeSessionTab(
     logEvent(state.repoRoot, "node-session:tab-opened", {
       nodeId: node.id,
       terminal: result.terminal,
+      target: result.target ?? "tab",
       worktreePath: worktree.path,
     });
     return result;

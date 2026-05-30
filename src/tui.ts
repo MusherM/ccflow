@@ -14,6 +14,7 @@ import { JobRunner } from "./core/jobs.js";
 import { logEvent } from "./core/log.js";
 import { launchNodeSessionTab, reconcileNodeSessionState } from "./core/node-session.js";
 import { saveState } from "./core/storage.js";
+import { terminalDisplayName } from "./core/terminal-tabs.js";
 import { drainTerminalInputBuffer, releaseStdinForChildProcess, resetTerminalForChildProcess } from "./core/terminal.js";
 import {
   buildEdgeLayer,
@@ -466,18 +467,22 @@ async function enterLeaf(
 
   try {
     const result = await launchNodeSessionTab(state, node.id, config ?? defaultCcflowConfig());
+    const terminalName = result.terminalName ?? terminalDisplayName(result.terminal);
+    const target = result.target ?? "tab";
     logEvent(state.repoRoot, "tui:enter:attached", {
       nodeId: node.id,
       terminal: result.terminal,
+      target,
     });
     ui.focusId = node.id;
-    ui.message = `Opened ${node.id} in ${result.terminal === "iterm2" ? "iTerm2" : "Ghostty"} tab`;
+    ui.message = `Opened ${node.id} in ${terminalName} ${target}`;
     logEvent(state.repoRoot, "tui:enter:done", {
       nodeId: node.id,
       status: node.status,
       focusId: ui.focusId,
       sessionId: node.cc.sessionId,
       terminal: result.terminal,
+      target,
     });
   } catch (error) {
     ui.message = error instanceof Error ? error.message : String(error);
