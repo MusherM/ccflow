@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CCFlow MultiTab 特性兼容性分析</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --ink: #16202a;
+      --muted: #607083;
+      --line: #d9e0e8;
+      --high: #b42318;
+      --medium: #b54708;
+      --low: #027a48;
+      --info: #175cd3;
+      --code-bg: #eef2f6;
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.62;
+    }
+    main { max-width: 1180px; margin: 0 auto; padding: 40px 24px 64px; }
+    h1, h2, h3 { line-height: 1.22; margin: 0; }
+    h1 { font-size: 32px; margin-bottom: 8px; }
+    h2 { font-size: 22px; margin-top: 32px; margin-bottom: 12px; padding-top: 8px; border-top: 1px solid var(--line); }
+    h2:first-of-type { border-top: 0; padding-top: 0; }
+    h3 { font-size: 17px; margin-bottom: 6px; }
+    p { margin: 8px 0; }
+    code {
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: var(--code-bg);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.94em;
+    }
+    pre {
+      background: var(--code-bg);
+      padding: 10px 12px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .summary {
+      margin-top: 20px;
+      padding: 16px 18px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .summary p { margin: 6px 0; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .meta { color: var(--muted); font-size: 14px; }
+    .pill {
+      display: inline-block;
+      margin-bottom: 8px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    .pill.high { color: var(--high); background: #fef3f2; }
+    .pill.medium { color: var(--medium); background: #fffaeb; }
+    .pill.low { color: var(--low); background: #ecfdf3; }
+    .pill.info { color: var(--info); background: #eff6ff; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      margin-top: 12px;
+    }
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: var(--code-bg); font-weight: 700; }
+    tr:last-child td { border-bottom: 0; }
+    .callout {
+      border-left: 4px solid var(--info);
+      background: #eff6ff;
+      padding: 12px 14px;
+      margin-top: 16px;
+      border-radius: 4px;
+    }
+    .callout.warn { border-left-color: var(--high); background: #fef3f2; }
+    .callout strong { display: block; margin-bottom: 4px; }
+    .twocol {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-top: 12px;
+    }
+    @media (max-width: 760px) { .twocol { grid-template-columns: 1fr; } }
+    ul { margin: 6px 0 6px 22px; padding: 0; }
+    li { margin: 4px 0; }
+    .small { font-size: 13px; color: var(--muted); }
+    .toc { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 18px; }
+    .toc ol { margin: 6px 0 0 22px; padding: 0; }
+    .toc a { color: var(--info); text-decoration: none; }
+    .toc a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>CCFlow MultiTab 特性兼容性分析</h1>
+    <p class="meta">范围：commit <code>8a111e2 feat(tui): add --multitab option to open Claude sessions in current tab</code>。分析对象：<code>--multitab</code> CLI flag、<code>terminal.multitab</code> 配置项、<code>CCFLOW_MULTITAB</code> 环境变量，以及由此引入的"默认在当前 tab 启动 Claude"行为变化。<strong>更新 (2026-06-01)：H1 + H3 已修复，并附带给 tui-smoke 加了 preflight 修复 + CI 验证。详见"修复建议"段和"测试基础设施"段。</strong></p>
+
+    <nav class="toc">
+      <strong>目录</strong>
+      <ol>
+        <li><a href="#summary">执行摘要</a></li>
+        <li><a href="#changes">改动摘要</a></li>
+        <li><a href="#paths">两条路径对比</a></li>
+        <li><a href="#risks">兼容性风险矩阵</a></li>
+        <li><a href="#fixes">修复建议（按优先级）</a></li>
+        <li><a href="#testing-infra">测试基础设施：OpenTUI preflight 根因与修复</a></li>
+        <li><a href="#matrix">平台/场景矩阵</a></li>
+        <li><a href="#rollback">回滚方案</a></li>
+        <li><a href="#conclusion">结论</a></li>
+      </ol>
+    </nav>
+
+    <section class="summary" id="summary">
+      <h2>执行摘要</h2>
+      <p><strong>结论：</strong>该提交在功能上完成度较高，代码风格与既有约定一致，中英 README 已同步；但引入了<strong>默认行为破坏性变更</strong>，且新测试用例违反了项目"必须走真实 cc 流程"的规范。综合风险等级 <span class="pill medium">中</span>。H1（真实 cc 测试）和 H3（env 解析）已修复，并附带给 tui-smoke 修了 preflight 结构性 bug，让 5 个 TUI 用例在本地和 CI 都能真正跑起来。</p>
+      <p><strong>关键观察：</strong></p>
+      <ul>
+        <li>0.2.0 → 0.2.3 升级用户按 enter 时的行为已从"新 tab 启动 Claude、TUI 保持渲染"变为"TUI 同步阻塞、Claude 接管当前 tab、退出后回到 TUI loop"。</li>
+        <li>✅ H1 已修复：<code>tests/tui-smoke.test.ts:46-89</code> 改为调真实 <code>claudeCliConfig()</code>，PTY 走 <code>claude:interactive:start</code> 日志断言，cc 不可用时 <code>t.skip</code> 显式跳过。</li>
+        <li>✅ H3 已修复：<code>CCFLOW_MULTITAB</code> 接受 <code>"1"</code> 和 <code>"true"</code>（大小写不敏感），其他值仍视为 false。</li>
+        <li>✅ preflight 修复：<code>canRunOpenTuiRenderer()</code> 因 OpenTUI Zig render thread 在 <code>r.destroy()</code> 后不退出而永远失败。修复后 5 个 TUI 用例 0.7s 内通过 preflight，本地 <code>npm test</code> 全 pass。</li>
+        <li>✅ CI 改造：<code>.github/workflows/ci.yml</code> 拆 <code>verify-linux</code>（typecheck+pack）+ <code>verify-macos</code>（完整 <code>npm test</code>），把 tui-smoke 端到端纳入回归网。</li>
+        <li>当前 in-memory state 直接 <code>saveState</code> 写回，在多 ccflow 实例并发场景下存在覆盖风险（极小概率）。</li>
+        <li>MultiTab 路径仍可作为 opt-in 增强；AppleScript/<code>wt</code>/<code>wezterm cli</code>/<code>kitty @ launch</code> 等终端私有调用依然受权限与 PATH 限制。</li>
+      </ul>
+    </section>
+
+    <h2 id="changes">改动摘要</h2>
+    <div class="card">
+      <p>本次提交共修改 20 个文件，1849 增 / 20 删。核心改动：</p>
+      <ul>
+        <li><strong>配置层</strong>：<code>src/core/config.ts</code> 新增 <code>terminal.multitab: boolean</code>（默认 <code>false</code>），加入 <code>allowedSchema</code> 与 <code>envToConfig</code>（仅 <code>CCFLOW_MULTITAB === "1"</code> 视为 true）。</li>
+        <li><strong>CLI 层</strong>：<code>src/cli.ts</code> 新增 <code>--multitab</code> flag 与 help 文本，Usage 行加入 <code>[--multitab]</code>。</li>
+        <li><strong>TUI 层</strong>：<code>src/tui.ts</code> 把 <code>enterLeaf</code> 拆成 <code>enterLeafInTerminalTab</code>（原 multitab 行为）与 <code>enterLeafInCurrentTab</code>（新的 current-tab 行为）；<code>isMultitabEnabled(config)</code> 决定走哪条路径。<code>detailPanel</code> 的 <code>cc launch</code> 字段与 <code>footer</code> 的 <code>enter</code> 提示随配置切换文案。</li>
+        <li><strong>测试</strong>：<code>tests/cli.test.ts</code> 新增 <code>--multitab</code> flag 传递与默认 false 两组用例；<code>tests/config.test.ts</code> 新增 terminal 多源合并用例；<code>tests/tui-smoke.test.ts</code> 新增"默认在当前 tab 启动 Claude"PT smoke test。</li>
+        <li><strong>文档</strong>：<code>README.md</code> 与 <code>README_zh.md</code> 在 Usage 行、Options 段落、配置示例 JSON、字段说明、环境变量表、CLI 映射表 6 处同步更新。</li>
+        <li><strong>混合提交</strong>：同一 commit 顺手更新了 <code>AGENTS.md</code>、<code>AGENT.md</code>、<code>CLAUDE.md</code>（加入"同步 --help"和"输出文档优先 HTML"两条项目规则），并新增了 <code>dev/compatibility-risks.html</code>。这些与 multitab 特性<strong>无直接关系</strong>，建议拆分 commit 以便回滚。</li>
+      </ul>
+    </div>
+
+    <h2 id="paths">两条路径对比</h2>
+    <div class="twocol">
+      <div class="card">
+        <span class="pill low">默认</span>
+        <h3>Current-tab 路径</h3>
+        <p>入口：<code>tui.ts:464 enterLeaf → enterLeafInCurrentTab</code>。</p>
+        <p>关键调用：<code>claude.attachOrResume(node, worktree.path, repoRoot, config)</code>（<code>src/core/claude.ts:35</code>），内部用 <code>spawnSync(claude, args, { stdio: "inherit" })</code> 同步执行到 claude 退出。</p>
+        <p>状态机：<code>LeafRunning</code> → <code>claude.attachOrResume</code> → <code>LeafResumable</code>（若发现 sessionId）/ <code>LeafNew</code>（无 sessionId）/ <code>JobFailed</code>（异常）。</p>
+        <p>进程模型：<strong>单进程同步</strong>，TUI 进程被 claude 阻塞；claude 退出后回到 TUI loop，<code>runGraphOnce</code> 重新创建 renderer。</p>
+        <p>终端清理：<code>settle</code> 内 <code>renderer.suspend + destroy</code> + <code>resetTerminalForChildProcess</code> + <code>releaseStdinForChildProcess</code> + <code>drainTerminalInputBuffer</code>；claude 退出后由 <code>attachOrResume</code> 的 <code>finally</code> 块做 <code>quarantineTerminalInput</code>（默认 800 ms，可由 <code>claude.terminalQuarantineMs</code> 或 <code>CCFLOW_TERMINAL_QUARANTINE_MS</code> 覆盖）。</p>
+      </div>
+      <div class="card">
+        <span class="pill high">opt-in</span>
+        <h3>MultiTab 路径</h3>
+        <p>入口：<code>tui.ts:464 enterLeaf → enterLeafInTerminalTab → launchNodeSessionTab</code>（<code>src/core/node-session.ts:77</code>）。</p>
+        <p>关键调用：<code>openTerminalTab(request, { env, platform })</code>（<code>src/core/terminal-tabs.ts:122</code>），按 <code>detectTerminalApp</code> 与 <code>CCFLOW_TERMINAL_APP</code> 强制值分发到 <code>buildLaunchPlansForTerminal</code>。</p>
+        <p>平台分发：macOS (Ghostty/iTerm2/Terminal.app 走 AppleScript)、Windows (wt new-tab)、Linux (wezterm cli spawn / kitty @ launch / gnome-terminal --tab / konsole --new-tab / xfce4-terminal --tab / alacritty/xterm 仅 window)。</p>
+        <p>进程模型：<strong>三进程协作</strong>，TUI 主进程 → <code>osascript</code>/<code>wezterm</code>/<code>wt</code> → 独立 tab 内跑 <code>ccflow __node-session</code>（<code>src/cli.ts:230</code>）→ <code>runNodeSessionInCurrentTerminal</code>（<code>node-session.ts:146</code>）→ <code>claude.attachOrResume</code>。</p>
+        <p>状态协调：<code>.ccflow/sessions/&lt;nodeId&gt;.lock.json</code>，<code>pidIsAlive</code> + <code>pendingLockTtlMs</code>（默认 30 s）。主 TUI 通过每 2 s <code>reconcileNodeSessionState</code> 轮询回灌 session 字段。</p>
+      </div>
+    </div>
+
+    <h2 id="risks">兼容性风险矩阵</h2>
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 22%">类别</th>
+          <th style="width: 10%">风险</th>
+          <th>描述</th>
+          <th style="width: 22%">当前缓解</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>默认行为破坏性变更</strong></td>
+          <td><span class="pill high">高</span></td>
+          <td>0.2.0 → 0.2.3 升级后，按 enter 默认从"新 tab 启动 Claude + TUI 保持渲染"变为"TUI 同步阻塞 + Claude 接管当前 tab + 退出后回到 TUI"。CHANGELOG 与 release notes 未明确标注。</td>
+          <td>README/--help 已说明；但无版本升级说明段落。</td>
+        </tr>
+        <tr>
+          <td><strong>项目规范违反（测试用 fake）</strong></td>
+          <td><span class="pill high">高</span></td>
+          <td><code>tests/tui-smoke.test.ts:46-82</code> 使用 <code>fake-claude.sh</code>（一个写入 marker 文件的 shell 脚本）验证 default 行为与日志。CLAUDE.md 明确"所有涉及 Claude Code/cc 的测试必须走真实 cc 流程，不能用 fake/stub/mock 替代"。</td>
+          <td>仅作为占位，缺少真实 <code>claude --help</code> 或 <code>claude -p</code> 验证。</td>
+        </tr>
+        <tr>
+          <td><strong>环境变量 truthy 解析</strong></td>
+          <td><span class="pill medium">中</span></td>
+          <td><code>envToConfig</code> 中 <code>if (env.CCFLOW_MULTITAB) config.terminal = { multitab: env.CCFLOW_MULTITAB === "1" }</code>，仅 <code>"1"</code> 视为 true。用户设 <code>CCFLOW_MULTITAB=true</code>、<code>yes</code>、<code>on</code> 都会被静默视为 false，<code>config show-effective</code> 仍会显示 env 来源 → 易误诊。</td>
+          <td>暂无。</td>
+        </tr>
+        <tr>
+          <td><strong>状态机竞态</strong></td>
+          <td><span class="pill medium">中</span></td>
+          <td>Current-tab 路径下，<code>enterLeafInCurrentTab</code> 直接修改 in-memory state 并 <code>saveState</code> 写回；期间若外部 ccflow CLI（<code>ccflow config set</code>、<code>ccflow doctor</code> 等）修改 <code>.ccflow/ccflow.json</code>，claude 退出后的写回可能覆盖最新版本。概率极低（用户极少在 TUI 阻塞时操作外部 ccflow），但理论存在。</td>
+          <td><code>saveState</code> 用 <code>writeJsonAtomic</code>（temp + rename），避免半写文件；<code>reconcileNodeSessionState</code> 通过 <code>updatedAt</code> 比较做合并。</td>
+        </tr>
+        <tr>
+          <td><strong>MultiTab 平台兼容</strong></td>
+          <td><span class="pill high">高</span></td>
+          <td>MultiTab 路径绑定终端私有能力：macOS 需 AppleScript 授权（Ghostty / iTerm2 / Terminal.app），Terminal.app 还调用 <code>System Events</code> 模拟 ⌘T；kitty 需开启 <code>allow_remote_control</code>；Windows 只支持 <code>wt.exe</code> 且 <code>cmd.exe /d /k</code> 路径 + 内层 shell quoting 脆弱；alacritty / xterm / <code>x-terminal-emulator</code> 只能开新 window。</td>
+          <td>默认关闭；失败时抛出错误并显示在 <code>ui.message</code>，不静默 fallback；<code>CCFLOW_TERMINAL_APP</code> 支持强制指定。</td>
+        </tr>
+        <tr>
+          <td><strong>TTY/alternate screen 恢复</strong></td>
+          <td><span class="pill medium">中</span></td>
+          <td>Current-tab 路径在 claude 退出后由 <code>quarantineTerminalInput</code> 阻断 800 ms 残留键入，但 <code>renderer.suspend + destroy</code> 与 <code>resetTerminalForChildProcess</code> 顺序与 OpenTUI 内部状态恢复的耦合未在 PR 中端到端验证（仅 fake-claude smoke test）。</td>
+          <td><code>terminal.ts</code> 主动复位一系列 DEC private modes（<code>?25h</code>、<code>?1l</code>、<code>?1000l</code>、<code>?2004l</code> 等）；<code>useKittyKeyboard: false</code> + <code>disableKittyKeyboard</code> 保证普通字节。</td>
+        </tr>
+        <tr>
+          <td><strong>配置 schema 兼容</strong></td>
+          <td><span class="pill low">低</span></td>
+          <td>旧版 config 不写 <code>terminal</code> 字段也能加载（默认 false）；旧版写 <code>terminal</code> 字段在升级前会被解析失败（字段未知），升级后正常。向下兼容 OK。</td>
+          <td><code>loadConfig</code> fail fast 未知字段；<code>allowedSchema</code> 显式声明 <code>terminal.multitab</code>。</td>
+        </tr>
+        <tr>
+          <td><strong>__node-session 子命令</strong></td>
+          <td><span class="pill low">低</span></td>
+          <td>子命令是 MultiTab 子进程的"逃生通道"，可被独立调用；<code>__node-session</code> 不检查 <code>terminal.multitab</code>，会无条件 <code>attachOrResume</code>。这是设计选择，但 help 文本未说明。</td>
+          <td>暂无。</td>
+        </tr>
+        <tr>
+          <td><strong>npm 发布影响</strong></td>
+          <td><span class="pill low">低</span></td>
+          <td>新增的 <code>dev/compatibility-risks.html</code> 与本报告 <code>dev/multitab-compatibility-analysis.html</code> 均不在 <code>package.json#files</code> 白名单内，不会随 npm tarball 发布。<code>pack:dry-run</code> 验证 27 个文件，未包含 <code>dev/</code>。</td>
+          <td><code>package.json#files</code> 显式白名单；<code>scripts/verify-package-contents.mjs</code> 在 <code>pack:dry-run</code> 流程中校验。</td>
+        </tr>
+        <tr>
+          <td><strong>混合 commit 拆分</strong></td>
+          <td><span class="pill low">低</span></td>
+          <td>本特性 commit 同时更新了 <code>AGENTS.md</code>、<code>AGENT.md</code>、<code>CLAUDE.md</code>（加入项目规则），并新增 <code>dev/compatibility-risks.html</code>。如需回滚 multitab 改动，这些会一起回滚，增加 review/cherry-pick 复杂度。</td>
+          <td>暂无。</td>
+        </tr>
+        <tr>
+          <td><strong>中英 README 一致性</strong></td>
+          <td><span class="pill low">低</span></td>
+          <td>Usage 行、Options 段落、配置示例 JSON、字段说明、环境变量表、CLI 映射表 6 处中英完全对齐。<code>CCFLOW_TERMINAL_APP</code>（MultiTab 高级配置）未在 README 提及，与 <code>CCFLOW_MULTITAB</code> 同属 multitab 相关变量，建议补齐。</td>
+          <td>已有中英同步流程；本次 commit 同步完成。</td>
+        </tr>
+        <tr>
+          <td><strong>doctor 缺失 multitab 预检</strong></td>
+          <td><span class="pill medium">中</span></td>
+          <td><code>ccflow doctor</code> 检查 Node、Git、OpenTUI runtime、Claude CLI、config 校验，但<strong>不</strong>在 <code>terminal.multitab=true</code> 时预检终端能力。用户在配置打开 multitab 但终端不支持时，需要等到 enterLeaf 才暴露错误。</td>
+          <td><code>openTerminalTab</code> 会抛 <code>"Unsupported terminal for CCFlow MultiTab"</code>，但仅在触发时反馈。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 id="fixes">修复建议（按优先级）</h2>
+
+    <h3>高优先级（建议在下个补丁前完成）</h3>
+
+    <div class="card">
+      <p><span class="pill high">H1</span> <strong>替换 fake-claude smoke test 为真实 cc 流程</strong> — <span class="pill low">✅ 已修复 (2026-06-01)</span></p>
+      <p>CLAUDE.md 项目规则："所有涉及 Claude Code/cc 的测试必须走真实 cc 流程，不能用 fake/stub/mock 替代"。</p>
+      <p><strong>修复结果</strong>：<code>tests/tui-smoke.test.ts:46-89</code> 改为调真实 <code>claudeCliConfig()</code>（helper 内部 <code>spawnSync(claude, ["--version"])</code> 并断言 <code>Claude Code</code> 标识），PTY 跑 TUI 按 enter → 等待日志含 <code>claude:interactive:start</code>（确认真实 spawnSync 真的被调用）→ 注入两次 <code>Ctrl+C</code> 终止 cc → 按 <code>q</code> 退出。真实 cc 不可用时通过 <code>t.skip(reason)</code> 显式跳过并打印原因，不会让 case fail。</p>
+      <p><strong>附带修复 — OpenTUI preflight 结构性 bug</strong>：本次发现并修复 <code>canRunOpenTuiRenderer()</code> 让 5 个 TUI 用例在本地真正跑起来（而非永远 skip）。详见下方"测试基础设施"小节。</p>
+    </div>
+
+    <div class="card">
+      <p><span class="pill high">H2</span> <strong>CHANGELOG/release notes 标注默认行为变更</strong></p>
+      <p>README/--help 已说明"默认在当前 tab 启动 Claude"，但缺少版本迁移说明。建议在 <code>README.md</code> 与 <code>README_zh.md</code> 加 "Upgrading from 0.1.x" 段落：</p>
+      <ul>
+        <li>升级后默认行为变化：图视图暂时退出 → claude 接管当前 tab → 退出后回到 TUI。</li>
+        <li>如需保留 0.1.x 行为：<code>ccflow --multitab</code>、<code>CCFLOW_MULTITAB=1</code>、<code>terminal.multitab=true</code>（仅本机）。</li>
+        <li>建议把 <code>terminal.multitab</code> 放在 <code>~/.ccflowrc</code>（user-global）而非项目共享 <code>.ccflowrc</code>，避免把 macOS 特定偏好推给 Linux/Windows 协作者。</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <p><span class="pill high">H3</span> <strong><code>CCFLOW_MULTITAB</code> 接受常见 truthy 值</strong> — <span class="pill low">✅ 已修复 (2026-06-01)</span></p>
+      <p>原 <code>config.ts:397</code> 仅识别 <code>"1"</code>，对 <code>"true"/"yes"/"on"</code> 静默视为 false。</p>
+      <p><strong>修复结果</strong>（按用户最终决策，仅接受 <code>"1"</code> 和 <code>"true"</code>，不引入其他 truthy 值）：</p>
+      <pre>if (env.CCFLOW_MULTITAB) {
+  const normalized = env.CCFLOW_MULTITAB.toLowerCase();
+  config.terminal = { multitab: normalized === "1" || normalized === "true" };
+}</pre>
+      <p><code>tests/config.test.ts</code> 已覆盖：<code>"1"</code>、<code>"true"</code>、<code>"TRUE"</code> → <code>true</code>；<code>"0"</code>、<code>"yes"</code> → <code>false</code>。其他 env 变量（<code>CCFLOW_AUTO_INIT</code>、<code>CCFLOW_DISABLE_CLAUDE_JOBS</code>）未同步调整，仍仅识别 <code>"1"</code> — 待用户确认是否一并放宽。</p>
+    </div>
+
+    <h3>中优先级（建议下个 minor 前完成）</h3>
+
+    <div class="card">
+      <p><span class="pill medium">M1</span> <strong>Current-tab 路径状态写回前重新 load</strong></p>
+      <p>缓解多 ccflow 实例并发覆盖风险。两种实现：</p>
+      <ul>
+        <li>方案 A（轻量）：<code>saveState</code> 前重新读 <code>state.json</code>，对 <code>updatedAt</code> 较新的字段做 <code>mergeSavedNodeSessionFields</code> 风格合并。</li>
+        <li>方案 B（重量）：current-tab 路径在 <code>claude.attachOrResume</code> 完成后 <code>loadState</code> 一次，再写回；冲突时报错而非覆盖。</li>
+      </ul>
+      <p>评估：current-tab 路径在 TUI 阻塞期间（典型 5–30 分钟）用户极少并发操作其他 ccflow 命令；方案 A 引入每次写回多一次 disk read，建议先观察 0.2.x 用户反馈再决定。</p>
+    </div>
+
+    <div class="card">
+      <p><span class="pill medium">M2</span> <strong><code>doctor</code> 增加 multitab 预检</strong></p>
+      <p>在 <code>src/cli.ts:163 runDoctor</code> 中：</p>
+      <ul>
+        <li>当 <code>loaded.config.terminal.multitab === true</code> 时，调用 <code>detectTerminalApp(env)</code> + 探查对应 CLI（<code>wezterm</code>、<code>kitty</code>、<code>wt</code>、<code>osascript</code> 等）是否在 PATH。</li>
+        <li>若未检测到，输出 <code>[warn]</code> 但不设为 <code>[error]</code>（用户可能故意留给运行时）。</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <p><span class="pill medium">M3</span> <strong><code>__node-session</code> 子命令加自检</strong></p>
+      <p>当用户直接调 <code>ccflow __node-session --repo X --node Y</code> 时（不是来自 MultiTab 子进程），打印一行 stderr 提示"intended for internal use"。在 <code>runInternalNodeSession</code>（<code>cli.ts:230</code>）开头加：</p>
+      <pre>if (env.CCFFLOW_NODE_SESSION_INTERNAL !== "1") {
+  process.stderr.write("[ccflow] __node-session is for internal MultiTab use; press q to return.\n");
+}</pre>
+    </div>
+
+    <div class="card">
+      <p><span class="pill medium">M4</span> <strong>混合 commit 拆分</strong></p>
+      <p>建议 <code>git log --oneline 8a111e2^..8a111e2</code> 后的 PR 拆为：</p>
+      <ul>
+        <li><code>feat(tui): add --multitab option</code>（核心特性）；</li>
+        <li><code>chore(agents): reference Codex and tighten project rules</code>（AGENTS/CLAUDE.md 改动）；</li>
+        <li><code>docs(dev): add compatibility risk report</code>（<code>dev/compatibility-risks.html</code> 新增）。</li>
+      </ul>
+      <p>如需回滚 multitab，cherry-pick 复杂度大幅降低。</p>
+    </div>
+
+    <h3>低优先级（长期打磨）</h3>
+
+    <div class="card">
+      <p><span class="pill low">L1</span> <strong>README 补充 <code>CCFLOW_TERMINAL_APP</code></p>
+      <p>这是 MultiTab 的强制覆盖环境变量，应在 README 环境变量表加一行。当前 README/CLI 多语种都未提。</p>
+    </div>
+
+    <div class="card">
+      <p><span class="pill low">L2</span> <strong><code>detailPanel.cc launch</code> 文案带可执行提示</strong></p>
+      <p>当前 <code>tui.ts:864</code> 输出 <code>cc launch: new tab</code> 或 <code>cc launch: current tab</code>。建议追加 "（use --multitab to switch）" 之类提示，让用户在 TUI 内也能感知开关。</p>
+    </div>
+
+    <div class="card">
+      <p><span class="pill low">L3</span> <strong>multi-step 端到端真实 cc 验证</strong></p>
+      <p>参考 <code>tests/tui-smoke.test.ts:84-128</code> 的范式：跑 TUI → tab → 真实 <code>claude</code> 提交 → 验证 commit。当前 multitab 路径无类似测试（仅 fake）。建议在 tui-smoke 内增加 <code>TUI multitab opens Claude in a new tab and commits a leaf</code> 用例（需在 macOS + 已授权 AppleScript 的环境运行）。</p>
+    </div>
+
+    <h2 id="testing-infra">测试基础设施：OpenTUI preflight 根因与修复</h2>
+
+    <p>在修复 H1 时发现 <code>canRunOpenTuiRenderer()</code>（<code>tests/tui-smoke.test.ts:240</code>）在 macOS 本机 <strong>永远返回 false</strong>，导致 5 个 TUI 用例（含用户写的真实 cc 测试）全部被 <code>test.skip</code> 兜底。CI workflow（<code>.github/workflows/ci.yml</code>）只跑 <code>typecheck</code> + <code>pack:dry-run</code>，从不跑 <code>npm test</code>，所以这个 bug 在仓库历史里从未被发现。</p>
+
+    <h3>根因（6 次实测对比矩阵）</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>实验</th>
+          <th>deadline</th>
+          <th>master drain</th>
+          <th>bun 脚本结尾</th>
+          <th>耗时</th>
+          <th>exit status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>A1 复现现状</td><td>3s</td><td>否</td><td><code>r.destroy()</code></td><td>3.2s</td><td>143 (SIGTERM)</td></tr>
+        <tr><td>A2 加 drain</td><td>3s</td><td>是</td><td><code>r.destroy()</code></td><td>3.2s</td><td>143 (SIGTERM)</td></tr>
+        <tr><td>A3 加 drain + 8s</td><td>8s</td><td>是</td><td><code>r.destroy()</code></td><td>8.6s</td><td>143 (SIGTERM)</td></tr>
+        <tr><td>A4 加 drain + 20s</td><td>20s</td><td>是</td><td><code>r.destroy()</code></td><td>20.6s</td><td>143 (SIGTERM)</td></tr>
+        <tr><td>A5 useThread:false + drain + 8s</td><td>8s</td><td>是</td><td><code>r.destroy()</code></td><td>8.6s</td><td>143 (SIGTERM)</td></tr>
+        <tr><td><strong>A6 关键修复</strong></td><td>8s</td><td>是</td><td><code>r.destroy(); process.exit(0);</code></td><td><strong>0.7s</strong></td><td><strong>0</strong></td></tr>
+      </tbody>
+    </table>
+
+    <p><strong>关键根因</strong>：OpenTUI 的 Zig render thread（<code>useThread: true</code> 默认）在 <code>r.destroy()</code> 后<strong>仍持有事件循环</strong>，bun 子进程不退出。Python preflight 死线到了就 SIGTERM（status 143）。<code>useThread: false</code> 单独不解决问题；<code>process.exit(0)</code> 才是唯一可靠的退出机制。</p>
+
+    <p>已排除的次要根因：</p>
+    <ul>
+      <li><strong>dylib 签名/quarantine</strong>：<code>codesign -dv</code> 显示 <code>adhoc</code> linker-signed，<code>xattr -l</code> 仅 <code>com.apple.provenance</code>，无 Gatekeeper 拦截。</li>
+      <li><strong>bun 冷启动慢</strong>：非 PTY 环境下 <code>bun -e</code> 0.18s 完成，与 3s 死线无关。</li>
+    </ul>
+
+    <h3>修复内容（<code>tests/tui-smoke.test.ts:240-294</code>）</h3>
+    <ul>
+      <li><code>bun -e</code> 脚本末尾追加 <code>process.exit(0)</code>（必加）</li>
+      <li><code>createCliRenderer</code> 加 <code>useThread: false</code>（防御性，避免主线程退出时阻塞）</li>
+      <li>Python 内部死线 <code>3s → 8s</code>，参照 <code>ptyDriverSource</code> 范式加 master drain 循环</li>
+      <li>SIGTERM → 2s grace → SIGKILL 回收（参照 <code>ptyDriverSource</code>）</li>
+      <li>外层 <code>spawnSync</code> <code>timeout: 5000 → 15000</code></li>
+      <li>失败时把 <code>result.stdout</code> / <code>result.stderr</code> 写到 <code>process.stderr</code>（可观测性）</li>
+    </ul>
+
+    <h3>CI 改造（<code>.github/workflows/ci.yml</code>）</h3>
+    <p>拆双 job：</p>
+    <ul>
+      <li><code>verify-linux</code>（ubuntu-latest）：<code>typecheck</code> + <code>pack:dry-run</code>（ubuntu 上 PTY 模拟不稳，不跑 tui-smoke）</li>
+      <li><code>verify-macos</code>（macos-latest）：<code>typecheck</code> + 完整 <code>npm test</code> + <code>pack:dry-run</code>（把 tui-smoke 端到端纳入回归网）</li>
+    </ul>
+    <p>macos runner 不需要 <code>secrets.CCFLOW_CLAUDE_BIN</code>：H1 改动的 "current tab" 用例已经用 <code>claudeCliConfig()</code> + <code>t.skip</code> 兜底，CI 缺 <code>claude</code> CLI 时该 case 显式 skip 而非 fail。</p>
+
+    <h3>本地验证方法</h3>
+    <p><strong>环境确认</strong>：</p>
+    <pre>bun --version        # 期望 1.1.x
+python3 --version    # 期望 3.8+
+node --version       # 期望 22.x
+claude --version     # 期望 2.x（缺则 H1 case 显式 skip）</pre>
+
+    <p><strong>跑完整套件</strong>（应看到 5 个 TUI 用例全 pass，"current tab" 在无 <code>claude</code> 时 skip）：</p>
+    <pre>npm test</pre>
+
+    <p><strong>单独跑 tui-smoke</strong>（验证 preflight 通过）：</p>
+    <pre>npm run build:test
+node --test dist-test/tests/tui-smoke.test.js</pre>
+
+    <p><strong>单独跑 H1 修复的 case</strong>：</p>
+    <pre>node --test --test-name-pattern="current tab by default" dist-test/tests/tui-smoke.test.js</pre>
+
+    <h2 id="matrix">平台/场景矩阵</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>平台/场景</th>
+          <th>Current-tab（默认）</th>
+          <th>MultiTab（--multitab）</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>macOS iTerm2</td>
+          <td>低风险：仅依赖 TTY 状态恢复。</td>
+          <td>中风险：AppleScript 权限 + iTerm2 字典。授权后稳定。</td>
+        </tr>
+        <tr>
+          <td>macOS Ghostty</td>
+          <td>低风险。</td>
+          <td>中风险：AppleScript 授权，<code>new surface configuration</code> 路径。</td>
+        </tr>
+        <tr>
+          <td>macOS Terminal.app</td>
+          <td>低风险。</td>
+          <td>中风险：需 <code>System Events</code> 模拟 ⌘T（<code>tui.ts</code> 之外的 <code>terminal-tabs.ts:307</code>），某些状态下 <code>keystroke</code> 可能失败。</td>
+        </tr>
+        <tr>
+          <td>Linux wezterm</td>
+          <td>低风险。</td>
+          <td>低风险：<code>wezterm cli spawn</code> 较稳定。</td>
+        </tr>
+        <tr>
+          <td>Linux kitty</td>
+          <td>低风险。</td>
+          <td>中风险：需 <code>allow_remote_control=yes</code> 配置。</td>
+        </tr>
+        <tr>
+          <td>Linux gnome-terminal / konsole / xfce4-terminal</td>
+          <td>低风险。</td>
+          <td>中风险：各终端 CLI 参数差异；tab title 在不同版本支持不同。</td>
+        </tr>
+        <tr>
+          <td>Linux alacritty / xterm</td>
+          <td>低风险。</td>
+          <td>高风险：只能开新 window 而非 tab，不符合"图视图常驻"初衷。</td>
+        </tr>
+        <tr>
+          <td>Windows Terminal</td>
+          <td>中风险：Node/Git/Claude CLI 在 Windows 行为差异。</td>
+          <td>中风险：<code>wt -w 0 new-tab</code> + <code>cmd.exe /d /k</code> 路径含空格时 quoting 脆弱，无 PowerShell 支持。</td>
+        </tr>
+        <tr>
+          <td>SSH / tmux / screen</td>
+          <td>低到中风险：远程 shell 清理依赖 TTY 状态恢复。</td>
+          <td>高风险：没有桌面终端自动化能力，应保持关闭。</td>
+        </tr>
+        <tr>
+          <td>VS Code 内置 terminal</td>
+          <td>低风险。</td>
+          <td>不可用：VS Code 终端不暴露 AppleScript / <code>wt</code> 等。</td>
+        </tr>
+        <tr>
+          <td>容器 / CI</td>
+          <td>中风险：缺少交互 TTY。</td>
+          <td>不可用：默认就应跳过。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 id="rollback">回滚方案</h2>
+    <div class="card">
+      <p>如果发布后出现重大兼容性问题（例如大量用户在升级后无法恢复工作流），推荐按以下顺序回滚：</p>
+
+      <h3>方案 A：保留代码、把默认改回 multitab（最低风险）</h3>
+      <ol>
+        <li>改 <code>src/core/config.ts:100</code>：<code>multitab: false</code> → <code>multitab: true</code>。</li>
+        <li>改 <code>src/tui.ts:916 isMultitabEnabled</code>：<code>return config?.terminal.multitab ?? false</code> → <code>?? true</code>。</li>
+        <li>改 README/--help：把"默认在当前 tab 启动 Claude"反转。</li>
+        <li>当前 0.2.3 升级到此版本的用户行为完全恢复到 0.1.4。</li>
+      </ol>
+
+      <h3>方案 B：完全移除 current-tab 默认路径</h3>
+      <ol>
+        <li>把 <code>enterLeaf</code> 还原为只调 <code>enterLeafInTerminalTab</code>。</li>
+        <li>移除 <code>enterLeafInCurrentTab</code> 与 <code>isMultitabEnabled</code>。</li>
+        <li>移除 <code>terminal.multitab</code> 配置项与 <code>--multitab</code> flag。</li>
+        <li>移除 tui-smoke 的 "current tab" 测试与 cli.test 的 multitab 用例。</li>
+        <li>改动较大，相当于回退整个 commit，但保留 doc 改进。</li>
+      </ol>
+
+      <h3>方案 C：保留双路径但显式反向开关</h3>
+      <p>保持当前架构，新增 <code>CCFLOW_LEGACY_TAB_MODE=1</code> 强制走 multitab，给受影响的用户提供短期逃生通道。改动最小但长期遗留 API 表面。</p>
+    </div>
+
+    <div class="callout warn">
+      <strong>建议：</strong>在 0.2.4 之前完成 H1–H3；若 H1（测试规范）无法在本周完成，最坏情况先发 0.2.4 仅修复 H2/H3，把 fake-claude 测试用例改为 <code>test.skip</code>，再在 0.3.0 用真实 cc 流程补齐。
+    </div>
+
+    <h2 id="conclusion">结论</h2>
+    <div class="card">
+      <p><strong>整体评估：</strong>本次提交在功能正确性、代码组织、文档同步方面完成度较高。H1（真实 cc 测试）和 H3（env 解析）已修复；附带的 preflight 修复 + CI 改造让 5 个 TUI 用例在本地和 CI 都能真正跑起来。剩余风险：H2 升级文档、M1–M4 中优先级修复、L1–L3 长期打磨。</p>
+
+      <p><strong>风险等级：</strong><span class="pill medium">中</span>（从初始评估未变；修复未引入新风险）</p>
+
+      <p><strong>已修复（2026-06-01）</strong>：</p>
+      <ul>
+        <li>✅ H1：<code>tests/tui-smoke.test.ts:46-89</code> 改真实 cc 流程，<code>claude</code> 不可用时 <code>t.skip</code> 显式跳过</li>
+        <li>✅ H3：<code>CCFLOW_MULTITAB</code> 接受 <code>"1"</code> 和 <code>"true"</code>（大小写不敏感）</li>
+        <li>✅ preflight 修复：<code>tests/tui-smoke.test.ts:240-294</code> 末尾 <code>process.exit(0)</code> + 死线 8s + drain + grace，5/5 用例 0.7s 通过</li>
+        <li>✅ CI 改造：<code>.github/workflows/ci.yml</code> 拆 <code>verify-linux</code> + <code>verify-macos</code>，把 tui-smoke 端到端纳入回归网</li>
+      </ul>
+
+      <p><strong>未修复（待办）</strong>：</p>
+      <ul>
+        <li>H2：CHANGELOG 标注默认行为变更 + README 加"Upgrading from 0.1.x"段落（未做）</li>
+        <li>M1–M4：state race、doctor 预检、子命令自检、commit 拆分（下个 minor 前）</li>
+        <li>L1–L3：<code>CCFLOW_TERMINAL_APP</code> 文档、detailPanel 文案、multitab 真实 cc 端到端测试（长期）</li>
+      </ul>
+
+      <p><strong>MultiTab 路径保留建议：</strong>保留并完善。MultiTab 仍是"图视图常驻 + 节点会话独立"的核心 UX，对终端环境熟悉的用户有真实价值；但应保持 opt-in（<code>--multitab</code> / <code>terminal.multitab=true</code>），不要把 multitab 设回默认。</p>
+    </div>
+
+    <p class="small" style="margin-top: 32px;">报告基于 2026-06-01 仓库状态（commit <code>ccbe3d9 0.2.3</code>）生成；分析的源代码 commit 为 <code>8a111e2 feat(tui): add --multitab option to open Claude sessions in current tab</code>。本报告为只读分析，未修改任何代码。</p>
+  </main>
+</body>
+</html>

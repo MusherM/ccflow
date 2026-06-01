@@ -51,4 +51,8 @@ openspec/
 prototypes/
 scratch/
 
+# 本地代码图与第三方 agent 配置（不属于 ccflow 源码）
+.codegraph/
+reasonix.toml
+
 *.tgz

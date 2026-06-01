@@ -7,8 +7,8 @@ on:
   pull_request:
 
 jobs:
-  verify:
-    name: Verify
+  verify-linux:
+    name: Verify (linux, typecheck + pack)
     runs-on: ubuntu-latest
 
     steps:
@@ -29,6 +29,39 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Verify package contents
+        run: npm run pack:dry-run
+
+  verify-macos:
+    name: Verify (macos, full test)
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run full test suite (incl. tui-smoke)
+        # tui-smoke requires a real PTY; the OpenTUI capability query handshake
+        # is only reliable on macOS runners. The `TUI enter opens Claude in the
+        # current tab by default` case uses claudeCliConfig() and t.skips when
+        # no Claude Code CLI is available, so this job does not need a secret.
+        run: npm test
 
       - name: Verify package contents
         run: npm run pack:dry-run

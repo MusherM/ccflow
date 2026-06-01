@@ -9,7 +9,7 @@ import { createPendingChildFromLeaf, sealLeafAndCreateChild } from "../src/core/
 import { JobRunner } from "../src/core/jobs.js";
 import { loadOrInitState, saveState, statePath } from "../src/core/storage.js";
 import { emptyStats, type CcflowState } from "../src/core/types.js";
-import { claudeCliConfig, requirePython3, withClaudeSettingsSnapshot } from "./helpers/claude-cli.js";
+import { claudeCliConfig, requirePython3, withClaudeSettingsSnapshot, type ClaudeCliConfig } from "./helpers/claude-cli.js";
 
 const tuiSmokeTest = canRunOpenTuiRenderer() ? test : test.skip;
 
@@ -43,8 +43,15 @@ tuiSmokeTest("TUI delete key removes the current latest leaf and preserves one c
   assert.equal(finalState.nodes[finalState.currentNodeId]?.type, "leaf");
 });
 
-tuiSmokeTest("TUI enter opens Claude in the current tab by default", () => {
+tuiSmokeTest("TUI enter opens Claude in the current tab by default", async (t) => {
   requirePython3();
+  let claude: ClaudeCliConfig;
+  try {
+    claude = claudeCliConfig();
+  } catch (error) {
+    t.skip(`Claude Code CLI unavailable: ${(error as Error).message}`);
+    return;
+  }
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-tui-current-tab-"));
   const git = new GitAdapter();
   git.ensureRepo(repoRoot);
@@ -56,34 +63,37 @@ tuiSmokeTest("TUI enter opens Claude in the current tab by default", () => {
     commitHash: git.currentCommit(repoRoot),
   });
 
-  const fakeClaude = path.join(repoRoot, "fake-claude.sh");
-  const marker = path.join(repoRoot, "current-tab-marker.txt");
-  fs.writeFileSync(fakeClaude, "#!/bin/sh\nprintf current-tab > \"$CCFLOW_FAKE_CLAUDE_MARKER\"\nexit 0\n");
-  fs.chmodSync(fakeClaude, 0o755);
-
-  const result = runTuiPty(
-    repoRoot,
-    [
-      { sequence: "\r", delay: 5, waitForFile: marker },
-      { sequence: "q", delay: 0.5 },
-    ],
-    {
-      ...process.env,
-      CCFLOW_CLAUDE_BIN: fakeClaude,
-      CCFLOW_FAKE_CLAUDE_MARKER: marker,
-    },
+  const logPath = path.join(repoRoot, ".ccflow", "logs", "ccflow.log");
+  const result = withClaudeSettingsSnapshot(() =>
+    runTuiPty(
+      repoRoot,
+      [
+        { sequence: "\r", delay: 30, waitForFileText: { path: logPath, text: "claude:interactive:start" } },
+        { sequence: "\x03", delay: 1 },
+        { sequence: "\x03", delay: 1 },
+        { sequence: "q", delay: 0.5 },
+      ],
+      claude.env,
+      120000,
+    ),
   );
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.equal(fs.readFileSync(marker, "utf8"), "current-tab");
-  const log = fs.readFileSync(path.join(repoRoot, ".ccflow", "logs", "ccflow.log"), "utf8");
+  const log = fs.readFileSync(logPath, "utf8");
   assert.match(log, /"target":"current-tab"/);
+  assert.match(log, /claude:interactive:start/);
   assert.doesNotMatch(log, /node-session:tab-opened/);
 });
 
-tuiSmokeTest("TUI tab creates a new leaf and delegates README commit to Claude Code", async () => {
+tuiSmokeTest("TUI tab creates a new leaf and delegates README commit to Claude Code", async (t) => {
   requirePython3();
-  const claude = claudeCliConfig();
+  let claude: ClaudeCliConfig;
+  try {
+    claude = claudeCliConfig();
+  } catch (error) {
+    t.skip(`Claude Code CLI unavailable: ${(error as Error).message}`);
+    return;
+  }
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-tui-commit-"));
   const git = new GitAdapter();
   git.ensureRepo(repoRoot);
@@ -236,12 +246,22 @@ function runTuiPty(
 function canRunOpenTuiRenderer(): boolean {
   const result = spawnSync("python3", ["-c", openTuiPreflightSource(), process.cwd()], {
     encoding: "utf8",
-    timeout: 5000,
+    timeout: 15000,
     env: {
       ...process.env,
       TERM: process.env.TERM === "dumb" ? "xterm-256color" : (process.env.TERM ?? "xterm-256color"),
     },
   });
+  if (result.status !== 0) {
+    process.stderr.write(
+      `[tui-smoke preflight] status=${result.status} signal=${result.signal ?? "none"}\n` +
+        `[tui-smoke preflight] --- stdout (${result.stdout?.length ?? 0} bytes) ---\n` +
+        (result.stdout ?? "") +
+        `\n[tui-smoke preflight] --- stderr (${result.stderr?.length ?? 0} bytes) ---\n` +
+        (result.stderr ?? "") +
+        "\n",
+    );
+  }
   return result.status === 0;
 }
 
@@ -260,33 +280,85 @@ if pid == 0:
     os.chdir(project_root)
     os.execvpe(
         "bun",
-        ["bun", "-e", "const { createCliRenderer } = await import('@opentui/core'); const renderer = await createCliRenderer({ exitOnCtrlC: false, clearOnShutdown: true, screenMode: 'alternate-screen', targetFps: 1, consoleMode: 'disabled', useKittyKeyboard: false, useMouse: false, enableMouseMovement: false }); renderer.destroy();"],
+        ["bun", "-e",
+         "const { createCliRenderer } = await import('@opentui/core');"
+         "const r = await createCliRenderer({"
+         "  exitOnCtrlC: false, clearOnShutdown: true, screenMode: 'alternate-screen',"
+         "  targetFps: 1, consoleMode: 'disabled',"
+         "  useKittyKeyboard: false, useMouse: false, enableMouseMovement: false,"
+         "  useThread: false"
+         "});"
+         "r.destroy();"
+         "process.exit(0);"
+        ],
         {**os.environ, "TERM": os.environ.get("TERM") or "xterm-256color", "OPENTUI_GRAPHICS": "false"},
     )
 
-deadline = time.time() + 3
-status = None
-while time.time() < deadline:
-    select.select([master], [], [], 0.05)
+output = bytearray()
+child_status = None
+
+def poll_child():
+    global child_status
+    if child_status is not None:
+        return child_status
     try:
-        waited_pid, raw_status = os.waitpid(pid, os.WNOHANG)
+        waited_pid, status = os.waitpid(pid, os.WNOHANG)
     except ChildProcessError:
-        status = 0
-        break
+        child_status = 0
+        return child_status
     if waited_pid == pid:
-        if os.WIFEXITED(raw_status):
-            status = os.WEXITSTATUS(raw_status)
-        elif os.WIFSIGNALED(raw_status):
-            status = 128 + os.WTERMSIG(raw_status)
+        if os.WIFEXITED(status):
+            child_status = os.WEXITSTATUS(status)
+        elif os.WIFSIGNALED(status):
+            child_status = 128 + os.WTERMSIG(status)
         else:
-            status = 1
-        break
+            child_status = 1
+    return child_status
 
+def drain(duration):
+    deadline = time.time() + duration
+    while time.time() < deadline:
+        ready, _, _ = select.select([master], [], [], 0.05)
+        if ready:
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                return
+            if not chunk:
+                return
+            output.extend(chunk)
+        if poll_child() is not None:
+            return
+
+# 启动缓冲 0.8s + 死线 8s（参照 ptyDriverSource 的成熟范式）
+drain(0.8)
+status = poll_child()
 if status is None:
-    os.kill(pid, signal.SIGTERM)
-    status = 1
+    deadline = time.time() + 8
+    while time.time() < deadline and poll_child() is None:
+        drain(0.1)
+    status = poll_child()
 
-sys.exit(status)
+# SIGTERM -> 2s grace -> SIGKILL（参照 ptyDriverSource）
+if status is None:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    deadline = time.time() + 2
+    while time.time() < deadline and poll_child() is None:
+        drain(0.05)
+    if poll_child() is None:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        while poll_child() is None:
+            drain(0.05)
+    status = poll_child() if poll_child() is not None else 1
+
+sys.stdout.buffer.write(output)
+sys.exit(status or 0)
 `;
 }
 

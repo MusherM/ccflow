@@ -73,6 +73,34 @@ test("terminal multitab defaults off and can be enabled by config and env", () =
   });
   assert.equal(loaded.config.terminal.multitab, false);
   assert.equal(loaded.sources["terminal.multitab"]?.kind, "env");
+
+  loaded = loadConfig({
+    repoRoot,
+    env: { ...process.env, CCFLOW_CONFIG: path.join(root, "missing-global.json"), CCFLOW_MULTITAB: "1" },
+  });
+  assert.equal(loaded.config.terminal.multitab, true);
+  assert.equal(loaded.sources["terminal.multitab"]?.kind, "env");
+
+  loaded = loadConfig({
+    repoRoot,
+    env: { ...process.env, CCFLOW_CONFIG: path.join(root, "missing-global.json"), CCFLOW_MULTITAB: "true" },
+  });
+  assert.equal(loaded.config.terminal.multitab, true);
+  assert.equal(loaded.sources["terminal.multitab"]?.kind, "env");
+
+  loaded = loadConfig({
+    repoRoot,
+    env: { ...process.env, CCFLOW_CONFIG: path.join(root, "missing-global.json"), CCFLOW_MULTITAB: "TRUE" },
+  });
+  assert.equal(loaded.config.terminal.multitab, true);
+  assert.equal(loaded.sources["terminal.multitab"]?.kind, "env");
+
+  loaded = loadConfig({
+    repoRoot,
+    env: { ...process.env, CCFLOW_CONFIG: path.join(root, "missing-global.json"), CCFLOW_MULTITAB: "yes" },
+  });
+  assert.equal(loaded.config.terminal.multitab, false);
+  assert.equal(loaded.sources["terminal.multitab"]?.kind, "env");
 });
 
 test("config validation rejects unknown fields, shared local executables, and full prompt replacement", () => {
