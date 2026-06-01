@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CCFlow Compatibility Risk Review</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --ink: #16202a;
+      --muted: #607083;
+      --line: #d9e0e8;
+      --high: #b42318;
+      --medium: #b54708;
+      --low: #027a48;
+      --accent: #175cd3;
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.58;
+    }
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 40px 24px 64px;
+    }
+    h1, h2, h3 {
+      line-height: 1.22;
+      margin: 0;
+    }
+    h1 {
+      font-size: 32px;
+      margin-bottom: 8px;
+    }
+    h2 {
+      font-size: 22px;
+      margin-top: 32px;
+      margin-bottom: 12px;
+    }
+    h3 {
+      font-size: 17px;
+      margin-bottom: 6px;
+    }
+    p {
+      margin: 8px 0;
+    }
+    code {
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: #eef2f6;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.94em;
+    }
+    .summary {
+      margin-top: 20px;
+      padding: 16px 18px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .risk {
+      display: inline-block;
+      margin-bottom: 8px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    .high { color: var(--high); background: #fef3f2; }
+    .medium { color: var(--medium); background: #fffaeb; }
+    .low { color: var(--low); background: #ecfdf3; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #eef2f6;
+      font-weight: 700;
+    }
+    tr:last-child td {
+      border-bottom: 0;
+    }
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: #eff6ff;
+      padding: 12px 14px;
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>CCFlow 兼容性风险评估</h1>
+    <p class="meta">日期：2026-05-30。范围：当前仓库的 TUI、Claude Code 调用、MultiTab、Git/worktree、配置、安装发布与跨平台终端行为。</p>
+
+    <section class="summary">
+      <h2>结论</h2>
+      <p>默认在当前终端 TAB 进入 Claude Code 的兼容性理论上更好。它只依赖当前进程释放 OpenTUI、恢复终端模式、继承当前 shell 环境并同步执行 Claude Code，不需要 AppleScript、终端私有 CLI、远程控制 socket、Windows Terminal 命令行或桌面权限。</p>
+      <p>MultiTab 仍有价值：它能让 CCFlow 图视图保持打开，并把节点会话放到独立 TAB/窗口中。但它天然绑定终端模拟器能力和桌面自动化权限，所以应作为 <code>--multitab</code> / <code>terminal.multitab=true</code> 的可选增强，而不是默认路径。</p>
+    </section>
+
+    <h2>风险矩阵</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>功能区域</th>
+          <th>风险等级</th>
+          <th>主要兼容性风险</th>
+          <th>当前缓解</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>当前 TAB 进入 Claude</td>
+          <td><span class="risk low">Low</span></td>
+          <td>依赖 TUI 能正确销毁、stdin/raw mode 能恢复、Claude 退出后终端状态能复原。少数终端/IME 仍可能在交接瞬间留下输入残留。</td>
+          <td>沿用 0.1.4 之前的流程：销毁 OpenTUI，释放 stdin，清空输入缓冲，再执行 <code>claude.attachOrResume</code>；保留返回后的 terminal quarantine。</td>
+        </tr>
+        <tr>
+          <td>MultiTab 新 TAB/窗口进入 Claude</td>
+          <td><span class="risk high">High</span></td>
+          <td>依赖 Ghostty/iTerm2/Terminal.app AppleScript、WezTerm/kitty/wt/gnome-terminal 等专有命令，可能受权限、PATH、终端版本、shell quoting 和远程控制配置影响。</td>
+          <td>默认关闭；通过 <code>--multitab</code>、<code>terminal.multitab</code> 或 <code>CCFLOW_MULTITAB=1</code> 显式开启。失败时保留错误信息，不 silently fallback。</td>
+        </tr>
+        <tr>
+          <td>OpenTUI 图形界面</td>
+          <td><span class="risk medium">Medium</span></td>
+          <td>OpenTUI/runtime 依赖可能受 Node 版本、Bun 或 node:ffi 支持影响；终端尺寸、备用屏幕、键盘协议差异会影响展示和输入。</td>
+          <td>启动前做运行时检测；禁用 Kitty keyboard 特性以保持普通字节输入；布局测试覆盖核心 viewport 行为。</td>
+        </tr>
+        <tr>
+          <td>Claude Code 交互式会话</td>
+          <td><span class="risk medium">Medium</span></td>
+          <td><code>claude</code> CLI、权限模式、模型参数、session log 路径和输出格式可能随 Claude Code 版本变化。session id 发现依赖 <code>~/.claude/projects</code> 日志。</td>
+          <td>支持 <code>claude.bin</code> 与 <code>claude.interactiveArgs</code> 配置；用启动时间过滤近期 session；doctor 检测 Claude CLI 可用性。</td>
+        </tr>
+        <tr>
+          <td>后台 commit/merge jobs</td>
+          <td><span class="risk medium">Medium</span></td>
+          <td>依赖 <code>claude -p</code>、JSON 输出、权限参数和模型名稳定；真实 API/CLI 失败会影响自动提交、自动合并、冲突处理。</td>
+          <td>可通过 <code>claude.disableJobs</code> 禁用；prompt kernel 保护工作流契约；测试覆盖 resume parent session、commit/merge 行为和失败路径。</td>
+        </tr>
+        <tr>
+          <td>Git DAG 与 worktree</td>
+          <td><span class="risk medium">Medium</span></td>
+          <td>不同 Git 版本、已有 worktree、分支命名、未跟踪文件和外部手工操作可能破坏状态预期。</td>
+          <td>状态保存前验证 graph invariants；分支前缀和 worktree 目录可配置；删除/merge 路径遵循 Git 允许的关系，不绕过 Git 约束。</td>
+        </tr>
+        <tr>
+          <td>配置系统</td>
+          <td><span class="risk low">Low</span></td>
+          <td>多来源合并容易产生误解；项目共享配置可能把终端相关行为推给不兼容的平台。</td>
+          <td><code>config show-effective</code> 带 source attribution；未知字段 fail fast；MultiTab 默认关闭，建议平台相关偏好放在 user-global 或 repo-local 配置。</td>
+        </tr>
+        <tr>
+          <td>安装与包启动</td>
+          <td><span class="risk medium">Medium</span></td>
+          <td>npm 全局安装、bin shim、Node 版本、外部 Bun/OpenTUI runtime 和平台 PATH 可能造成启动失败。</td>
+          <td>bin bootstrap 覆盖 npm symlink shim；Node 版本检查；postinstall/doctor 路径用于更早暴露运行时缺失。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>功能级建议</h2>
+    <div class="grid">
+      <section class="card">
+        <span class="risk low">Default</span>
+        <h3>保持当前 TAB 为默认</h3>
+        <p>这是最小依赖路径，适合 macOS、Linux、Windows、远程 SSH、tmux/screen、VS Code terminal 和未知终端。它牺牲了图视图常驻，但减少了桌面自动化与终端私有 API 风险。</p>
+      </section>
+      <section class="card">
+        <span class="risk high">Opt-in</span>
+        <h3>MultiTab 只作为增强模式</h3>
+        <p>适合用户明确知道自己的终端支持新 TAB 自动化时开启。建议优先用 <code>~/.ccflowrc</code> 或 <code>.ccflow/config.local.json</code> 开启，避免项目共享配置影响其他平台。</p>
+      </section>
+      <section class="card">
+        <span class="risk medium">Test</span>
+        <h3>真实 Claude 流程分层验证</h3>
+        <p>单元测试覆盖配置、命令构造和状态迁移；发布前仍应跑至少一次真实 Claude Code 当前 TAB 流程，以及按需跑 MultiTab 终端启动 smoke test。</p>
+      </section>
+      <section class="card">
+        <span class="risk medium">Docs</span>
+        <h3>文档明确默认与开关</h3>
+        <p>用户应能从 <code>ccflow --help</code>、README 和配置示例中看出：默认当前 TAB；<code>--multitab</code> 和 <code>terminal.multitab=true</code> 才打开新 TAB。</p>
+      </section>
+    </div>
+
+    <h2>平台风险细分</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>平台/终端</th>
+          <th>当前 TAB</th>
+          <th>MultiTab</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>macOS Ghostty/iTerm2/Terminal.app</td>
+          <td>低风险，主要看 raw mode、IME 和 alternate screen 恢复。</td>
+          <td>中到高风险，依赖 AppleScript 授权、应用字典、终端版本与前台窗口状态。</td>
+        </tr>
+        <tr>
+          <td>Linux 桌面终端</td>
+          <td>低到中风险，通常只依赖当前 shell 和 PTY。</td>
+          <td>中到高风险，各终端 CLI 参数差异大；kitty 还可能依赖 remote control。</td>
+        </tr>
+        <tr>
+          <td>Windows Terminal</td>
+          <td>中风险，Node/Git/Claude CLI 与 shell 环境差异更大。</td>
+          <td>高风险，<code>wt</code> 命令、working directory、cmd quoting 和 profile 行为都可能影响启动。</td>
+        </tr>
+        <tr>
+          <td>SSH/tmux/screen/CI</td>
+          <td>低到中风险，适合保守默认。</td>
+          <td>高风险，通常没有桌面终端自动化能力，应该保持关闭。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <strong>建议的默认策略：</strong>
+      默认当前 TAB；只有用户主动传入 <code>ccflow --multitab</code>、设置 <code>terminal.multitab=true</code>，或设置 <code>CCFLOW_MULTITAB=1</code> 时才启用新 TAB。这样能保留 MultiTab 对熟悉终端环境用户的效率收益，同时把最大兼容性风险留在显式 opt-in 路径。
+    </div>
+  </main>
+</body>
+</html>

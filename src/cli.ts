@@ -112,6 +112,10 @@ function parseArgs(argv: string[]): ParsedArgs {
       parsed.cliConfig.startup = { autoInit: false };
       continue;
     }
+    if (arg === "--multitab") {
+      parsed.cliConfig.terminal = { multitab: true };
+      continue;
+    }
     if (arg === "--git") {
       parsed.gitInit = true;
       continue;
@@ -282,7 +286,7 @@ function runConfig(parsed: ParsedArgs, cwd: string, out: (value: string) => void
 function helpText(): string {
   return [
     "Usage:",
-    "  ccflow [--repo <path>] [--no-auto-init]",
+    "  ccflow [--repo <path>] [--no-auto-init] [--multitab] [--claude-bin <path>] [--model <name>]",
     "  ccflow init [path] [--git] [--force]",
     "  ccflow doctor [--repo <path>]",
     "  ccflow config path [--repo <path>]",
@@ -291,6 +295,11 @@ function helpText(): string {
     "  ccflow config prompt <commit|merge> [--repo <path>]",
     "  ccflow --help",
     "  ccflow --version",
+    "",
+    "Options:",
+    "  --multitab        Open Claude sessions in a new terminal tab/window instead of the current tab.",
+    "  --claude-bin      Override the Claude Code executable for this invocation.",
+    "  --model           Override the Claude model used by background jobs for this invocation.",
   ].join("\n");
 }
 

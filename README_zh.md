@@ -99,7 +99,7 @@ ccflow config show-effective
 ## 命令
 
 ```bash
-ccflow [--repo <path>] [--no-auto-init] [--claude-bin <path>] [--model <name>]
+ccflow [--repo <path>] [--no-auto-init] [--multitab] [--claude-bin <path>] [--model <name>]
 ccflow init [path] [--git] [--force]
 ccflow doctor [--repo <path>]
 ccflow config path [--repo <path>]
@@ -112,7 +112,7 @@ ccflow --version
 
 `--repo` 允许你从任意目录运行 CCFlow，但把目标指向指定仓库。从子目录或 CCFlow 管理的 worktree 中运行时，会解析回 owner repository 的状态，而不是创建一个独立项目。
 
-`--no-auto-init` 会禁用本次调用的自动初始化。`--claude-bin` 和 `--model` 会覆盖本次调用的 Claude Code 设置。
+`--no-auto-init` 会禁用本次调用的自动初始化。默认情况下，进入节点会让 CCFlow 暂时退出 TUI，并在当前终端 TAB 中打开 Claude Code。`--multitab` 会为本次调用启用较新的 MultiTab 模式，在当前终端支持时把 Claude Code 打开到新的终端 TAB 或窗口中。`--claude-bin` 和 `--model` 会覆盖本次调用的 Claude Code 设置。
 
 ## 配置
 
@@ -170,6 +170,9 @@ ccflow config set --global prompts.commit.instructions '["Keep commits small.","
   "startup": {
     "autoInit": true
   },
+  "terminal": {
+    "multitab": false
+  },
   "worktree": {
     "enterLeafAutoSwitch": true,
     "warnBeforeSwitch": false,
@@ -206,6 +209,7 @@ ccflow config set --global prompts.commit.instructions '["Keep commits small.","
 - `claude.disableJobs`：为 `true` 时禁用后台 Claude Code job。
 - `claude.terminalQuarantineMs`：从交互式 Claude Code 返回后，CCFlow 重新绘制 TUI 前等待的时间。
 - `startup.autoInit`：允许 `ccflow` 在已有 Git 仓库中自动初始化 `.ccflow/`。
+- `terminal.multitab`：进入节点时把 Claude Code 打开到新的终端 TAB/窗口，而不是当前 TAB。默认值为 `false`，以获得更广泛的终端兼容性。
 - `worktree.enterLeafAutoSwitch`：进入叶子节点时自动切换 shell/worktree 上下文。
 - `worktree.warnBeforeSwitch`：启用后，在切换 worktree 前要求确认。
 - `worktree.directory`：CCFlow 管理 worktree 使用的目录。
@@ -229,6 +233,7 @@ ccflow config set --global prompts.commit.instructions '["Keep commits small.","
 | `CCFLOW_CLAUDE_MODEL` | `claude.model` |
 | `CCFLOW_DISABLE_CLAUDE_JOBS` | `claude.disableJobs`，`1` 表示 `true` |
 | `CCFLOW_TERMINAL_QUARANTINE_MS` | `claude.terminalQuarantineMs` |
+| `CCFLOW_MULTITAB` | `terminal.multitab`，`1` 表示 `true` |
 | `CCFLOW_BRANCH_PREFIX` | `worktree.branchPrefix` |
 | `CCFLOW_WORKTREE_DIR` | `worktree.directory` |
 | `CCFLOW_AUTO_INIT` | `startup.autoInit`，`0` 表示 `false` |
@@ -238,6 +243,7 @@ CLI 覆盖映射：
 | CLI 参数 | 配置字段 |
 | --- | --- |
 | `--no-auto-init` | `startup.autoInit=false` |
+| `--multitab` | `terminal.multitab=true` |
 | `--claude-bin <path>` | `claude.bin` |
 | `--model <name>` | `claude.model` |
 

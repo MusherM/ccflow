@@ -56,3 +56,5 @@ src/
 - npm 发布相关修改必须保持 `package.json#files` 为显式白名单，并用 `npm run pack:dry-run` 检查 tarball 内容。
 - Prompt 配置默认只能追加指导，不允许项目共享配置完整替换 commit/merge kernel prompt；CCFlow 依赖这些 kernel 指令维持 job 后置条件。
 - `.ccflow/` 是运行时状态目录；共享项目配置使用仓库根目录 `.ccflowrc`，本机项目覆盖使用 `.ccflow/config.local.json`。
+- 如果 ccflow 有新的参数，需要同步更新 --help 中的内容
+- 在任何需要输出文档的时候，都应该优先采用html格式

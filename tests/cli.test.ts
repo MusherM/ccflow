@@ -17,6 +17,7 @@ test("help and version work outside repositories without side effects", async ()
   assert.equal(fs.existsSync(path.join(cwd, ".git")), false);
   assert.equal(fs.existsSync(path.join(cwd, ".ccflow")), false);
   assert.match(output.join("\n"), /Usage:/);
+  assert.match(output.join("\n"), /--multitab/);
 });
 
 test("init rejects non-git directories unless --git is provided", async () => {
@@ -47,6 +48,42 @@ test("default launch auto-initializes git repos and no-auto-init rejects missing
   assert.equal(await runCli([], { cwd: repoRoot, startTui: async () => { tuiStarted = true; } }), 0);
   assert.equal(tuiStarted, true);
   assert.equal(fs.existsSync(statePath(repoRoot)), true);
+});
+
+test("multitab CLI flag is passed into effective TUI config", async () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-cli-multitab-"));
+  const git = new GitAdapter();
+  git.ensureRepo(repoRoot);
+
+  let multitab: boolean | null = null;
+  assert.equal(
+    await runCli(["--multitab"], {
+      cwd: repoRoot,
+      startTui: async (_state, options) => {
+        multitab = options.config.terminal.multitab;
+      },
+    }),
+    0,
+  );
+  assert.equal(multitab, true);
+});
+
+test("default launch keeps multitab disabled", async () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-cli-current-tab-"));
+  const git = new GitAdapter();
+  git.ensureRepo(repoRoot);
+
+  let multitab: boolean | null = null;
+  assert.equal(
+    await runCli([], {
+      cwd: repoRoot,
+      startTui: async (_state, options) => {
+        multitab = options.config.terminal.multitab;
+      },
+    }),
+    0,
+  );
+  assert.equal(multitab, false);
 });
 
 test("unsupported Node startup fails before repository state mutation", async () => {

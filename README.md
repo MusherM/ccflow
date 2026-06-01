@@ -99,7 +99,7 @@ ccflow config show-effective
 ## Commands
 
 ```bash
-ccflow [--repo <path>] [--no-auto-init] [--claude-bin <path>] [--model <name>]
+ccflow [--repo <path>] [--no-auto-init] [--multitab] [--claude-bin <path>] [--model <name>]
 ccflow init [path] [--git] [--force]
 ccflow doctor [--repo <path>]
 ccflow config path [--repo <path>]
@@ -112,7 +112,7 @@ ccflow --version
 
 `--repo` lets you run CCFlow from anywhere while targeting a specific repository. Running from nested directories or CCFlow-managed worktrees resolves back to the owner repository state instead of creating a separate project.
 
-`--no-auto-init` disables first-run repository initialization for that invocation. `--claude-bin` and `--model` override Claude Code settings for that invocation.
+`--no-auto-init` disables first-run repository initialization for that invocation. By default, entering a node opens Claude Code in the current terminal tab after CCFlow temporarily leaves the TUI. `--multitab` enables the newer MultiTab mode for that invocation, opening Claude Code in a separate terminal tab or window when the current terminal supports it. `--claude-bin` and `--model` override Claude Code settings for that invocation.
 
 ## Configuration
 
@@ -170,6 +170,9 @@ ccflow config set --global prompts.commit.instructions '["Keep commits small.","
   "startup": {
     "autoInit": true
   },
+  "terminal": {
+    "multitab": false
+  },
   "worktree": {
     "enterLeafAutoSwitch": true,
     "warnBeforeSwitch": false,
@@ -206,6 +209,7 @@ Field meanings:
 - `claude.disableJobs`: disables background Claude Code jobs when `true`.
 - `claude.terminalQuarantineMs`: delay after returning from interactive Claude Code before CCFlow redraws the TUI.
 - `startup.autoInit`: allows `ccflow` to initialize `.ccflow/` automatically in an existing Git repository.
+- `terminal.multitab`: opens Claude Code in a new terminal tab/window instead of the current tab when entering a node. Default is `false` for broader terminal compatibility.
 - `worktree.enterLeafAutoSwitch`: switches the shell/worktree context automatically when entering a leaf.
 - `worktree.warnBeforeSwitch`: asks for confirmation before worktree switching when enabled.
 - `worktree.directory`: directory used for CCFlow-managed worktrees.
@@ -229,6 +233,7 @@ Environment variable mapping:
 | `CCFLOW_CLAUDE_MODEL` | `claude.model` |
 | `CCFLOW_DISABLE_CLAUDE_JOBS` | `claude.disableJobs` (`1` means `true`) |
 | `CCFLOW_TERMINAL_QUARANTINE_MS` | `claude.terminalQuarantineMs` |
+| `CCFLOW_MULTITAB` | `terminal.multitab` (`1` means `true`) |
 | `CCFLOW_BRANCH_PREFIX` | `worktree.branchPrefix` |
 | `CCFLOW_WORKTREE_DIR` | `worktree.directory` |
 | `CCFLOW_AUTO_INIT` | `startup.autoInit` (`0` means `false`) |
@@ -238,6 +243,7 @@ CLI override mapping:
 | CLI flag | Config field |
 | --- | --- |
 | `--no-auto-init` | `startup.autoInit=false` |
+| `--multitab` | `terminal.multitab=true` |
 | `--claude-bin <path>` | `claude.bin` |
 | `--model <name>` | `claude.model` |
 

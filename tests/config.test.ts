@@ -47,6 +47,34 @@ test("config precedence merges nested objects and replaces arrays with source at
   assert.equal(loaded.sources["prompts.commit.testPreferences"]?.kind, "cli");
 });
 
+test("terminal multitab defaults off and can be enabled by config and env", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-config-terminal-"));
+  const repoRoot = path.join(root, "repo");
+  fs.mkdirSync(repoRoot, { recursive: true });
+
+  let loaded = loadConfig({
+    repoRoot,
+    env: { ...process.env, CCFLOW_CONFIG: path.join(root, "missing-global.json") },
+  });
+  assert.equal(loaded.config.terminal.multitab, false);
+  assert.equal(loaded.sources["terminal.multitab"]?.kind, "defaults");
+
+  fs.writeFileSync(path.join(repoRoot, ".ccflowrc"), JSON.stringify({ terminal: { multitab: true } }));
+  loaded = loadConfig({
+    repoRoot,
+    env: { ...process.env, CCFLOW_CONFIG: path.join(root, "missing-global.json") },
+  });
+  assert.equal(loaded.config.terminal.multitab, true);
+  assert.equal(loaded.sources["terminal.multitab"]?.kind, "repo-shared");
+
+  loaded = loadConfig({
+    repoRoot,
+    env: { ...process.env, CCFLOW_CONFIG: path.join(root, "missing-global.json"), CCFLOW_MULTITAB: "0" },
+  });
+  assert.equal(loaded.config.terminal.multitab, false);
+  assert.equal(loaded.sources["terminal.multitab"]?.kind, "env");
+});
+
 test("config validation rejects unknown fields, shared local executables, and full prompt replacement", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-config-invalid-"));
   fs.writeFileSync(path.join(root, ".ccflowrc"), JSON.stringify({ claude: { bin: "/tmp/claude" } }));

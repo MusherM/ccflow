@@ -24,6 +24,9 @@ export interface CcflowConfig {
   startup: {
     autoInit: boolean;
   };
+  terminal: {
+    multitab: boolean;
+  };
   worktree: {
     enterLeafAutoSwitch: boolean;
     warnBeforeSwitch: boolean;
@@ -93,6 +96,9 @@ const defaultConfig: CcflowConfig = {
   startup: {
     autoInit: true,
   },
+  terminal: {
+    multitab: false,
+  },
   worktree: {
     enterLeafAutoSwitch: true,
     warnBeforeSwitch: false,
@@ -130,6 +136,9 @@ const allowedSchema = {
   },
   startup: {
     autoInit: "boolean",
+  },
+  terminal: {
+    multitab: "boolean",
   },
   worktree: {
     enterLeafAutoSwitch: "boolean",
@@ -385,6 +394,7 @@ function envToConfig(env: NodeJS.ProcessEnv): PartialCcflowConfig | null {
   if (env.CCFLOW_CLAUDE_MODEL) config.claude = { ...(config.claude ?? {}), model: env.CCFLOW_CLAUDE_MODEL };
   if (env.CCFLOW_DISABLE_CLAUDE_JOBS) config.claude = { ...(config.claude ?? {}), disableJobs: env.CCFLOW_DISABLE_CLAUDE_JOBS === "1" };
   if (env.CCFLOW_TERMINAL_QUARANTINE_MS) config.claude = { ...(config.claude ?? {}), terminalQuarantineMs: Number(env.CCFLOW_TERMINAL_QUARANTINE_MS) };
+  if (env.CCFLOW_MULTITAB) config.terminal = { multitab: env.CCFLOW_MULTITAB === "1" };
   if (env.CCFLOW_BRANCH_PREFIX) config.worktree = { ...(config.worktree ?? {}), branchPrefix: env.CCFLOW_BRANCH_PREFIX };
   if (env.CCFLOW_WORKTREE_DIR) config.worktree = { ...(config.worktree ?? {}), directory: env.CCFLOW_WORKTREE_DIR };
   if (env.CCFLOW_AUTO_INIT) config.startup = { autoInit: env.CCFLOW_AUTO_INIT !== "0" };

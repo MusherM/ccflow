@@ -43,6 +43,44 @@ tuiSmokeTest("TUI delete key removes the current latest leaf and preserves one c
   assert.equal(finalState.nodes[finalState.currentNodeId]?.type, "leaf");
 });
 
+tuiSmokeTest("TUI enter opens Claude in the current tab by default", () => {
+  requirePython3();
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-tui-current-tab-"));
+  const git = new GitAdapter();
+  git.ensureRepo(repoRoot);
+  fs.writeFileSync(path.join(repoRoot, "README.md"), "initial\n");
+  git.commit(repoRoot, "test: initial readme");
+  loadOrInitState({
+    repoRoot,
+    branch: git.currentBranch(repoRoot),
+    commitHash: git.currentCommit(repoRoot),
+  });
+
+  const fakeClaude = path.join(repoRoot, "fake-claude.sh");
+  const marker = path.join(repoRoot, "current-tab-marker.txt");
+  fs.writeFileSync(fakeClaude, "#!/bin/sh\nprintf current-tab > \"$CCFLOW_FAKE_CLAUDE_MARKER\"\nexit 0\n");
+  fs.chmodSync(fakeClaude, 0o755);
+
+  const result = runTuiPty(
+    repoRoot,
+    [
+      { sequence: "\r", delay: 5, waitForFile: marker },
+      { sequence: "q", delay: 0.5 },
+    ],
+    {
+      ...process.env,
+      CCFLOW_CLAUDE_BIN: fakeClaude,
+      CCFLOW_FAKE_CLAUDE_MARKER: marker,
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(fs.readFileSync(marker, "utf8"), "current-tab");
+  const log = fs.readFileSync(path.join(repoRoot, ".ccflow", "logs", "ccflow.log"), "utf8");
+  assert.match(log, /"target":"current-tab"/);
+  assert.doesNotMatch(log, /node-session:tab-opened/);
+});
+
 tuiSmokeTest("TUI tab creates a new leaf and delegates README commit to Claude Code", async () => {
   requirePython3();
   const claude = claudeCliConfig();

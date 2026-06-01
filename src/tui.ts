@@ -13,7 +13,7 @@ import { getNode, getWorktree, isEditableLeaf, isLeafNode, isOperationBlockedNod
 import { JobRunner } from "./core/jobs.js";
 import { logEvent } from "./core/log.js";
 import { launchNodeSessionTab, reconcileNodeSessionState } from "./core/node-session.js";
-import { saveState } from "./core/storage.js";
+import { saveSession, saveState } from "./core/storage.js";
 import { terminalDisplayName } from "./core/terminal-tabs.js";
 import { drainTerminalInputBuffer, releaseStdinForChildProcess, resetTerminalForChildProcess } from "./core/terminal.js";
 import {
@@ -77,7 +77,7 @@ export async function runCcflowTui(state: CcflowState, options: { config?: Ccflo
       currentWorktreeId: state.currentWorktreeId,
     });
     refreshDirtyStatuses(state, git);
-    const exit = await runGraphOnce(state, ui, jobs, options.config);
+    const exit = await runGraphOnce(state, ui, jobs, claude, options.config);
     logEvent(state.repoRoot, "tui:graph:exit", {
       loop,
       kind: exit.kind,
@@ -86,7 +86,7 @@ export async function runCcflowTui(state: CcflowState, options: { config?: Ccflo
     });
     if (exit.kind === "quit") return;
     if (exit.kind === "enter" && exit.nodeId) {
-      await enterLeaf(state, exit.nodeId, ui, options.config);
+      await enterLeaf(state, exit.nodeId, claude, ui, options.config);
       logEvent(state.repoRoot, "tui:enter:return-to-loop", {
         loop,
         nodeId: exit.nodeId,
@@ -122,6 +122,7 @@ async function runGraphOnce(
   state: CcflowState,
   ui: UiState,
   jobs: JobRunner,
+  claude: ClaudeAdapter,
   config?: CcflowConfig,
 ): Promise<TuiExit> {
   const previousOpenTuiGraphics = process.env.OPENTUI_GRAPHICS;
@@ -189,7 +190,7 @@ async function runGraphOnce(
     resolve = innerResolve;
   });
 
-  const rerender = () => renderApp(renderer, state, ui);
+  const rerender = () => renderApp(renderer, state, ui, config);
   const persistAndSaveState = () => {
     persistUiPreferences(state, ui);
     saveState(state);
@@ -293,9 +294,14 @@ async function runGraphOnce(
         rerender();
         return;
       }
-      void runAction("opening node tab...", async () => {
-        await enterLeaf(state, node.id, ui, config);
-      });
+      if (isMultitabEnabled(config)) {
+        void runAction("opening node tab...", async () => {
+          await enterLeaf(state, node.id, claude, ui, config);
+        });
+        return;
+      }
+      persistAndSaveState();
+      settle({ kind: "enter", nodeId: node.id });
       return;
     }
 
@@ -404,7 +410,13 @@ async function runGraphOnce(
           ui.focusId = merge.id;
           ui.selectedIds.clear();
           if (merge.status === "MergeConflict") {
-            await enterLeaf(state, merge.id, ui, config);
+            if (isMultitabEnabled(config)) {
+              await enterLeaf(state, merge.id, claude, ui, config);
+            } else {
+              ui.busy = false;
+              ui.task = null;
+              settle({ kind: "enter", nodeId: merge.id });
+            }
             return;
           }
           ui.message = `Merge node ${merge.id}`;
@@ -452,6 +464,20 @@ async function runGraphOnce(
 async function enterLeaf(
   state: CcflowState,
   nodeId: string,
+  claude: ClaudeAdapter,
+  ui: UiState,
+  config?: CcflowConfig,
+): Promise<void> {
+  if (isMultitabEnabled(config)) {
+    await enterLeafInTerminalTab(state, nodeId, ui, config);
+    return;
+  }
+  await enterLeafInCurrentTab(state, nodeId, claude, ui, config);
+}
+
+async function enterLeafInTerminalTab(
+  state: CcflowState,
+  nodeId: string,
   ui: UiState,
   config?: CcflowConfig,
 ): Promise<void> {
@@ -494,6 +520,73 @@ async function enterLeaf(
   }
 }
 
+async function enterLeafInCurrentTab(
+  state: CcflowState,
+  nodeId: string,
+  claude: ClaudeAdapter,
+  ui: UiState,
+  config?: CcflowConfig,
+): Promise<void> {
+  const node = getNode(state, nodeId);
+  const worktree = getWorktree(state, node.git.worktreeId);
+  if (state.settings.worktree.enterLeafAutoSwitch) {
+    switchCurrentWorktree(state, node.id);
+  }
+
+  node.status = "LeafRunning";
+  node.cc.processId = null;
+  node.cc.resumeMode = node.cc.sessionId ? "resume" : "new";
+  node.error = null;
+  node.updatedAt = new Date().toISOString();
+  saveState(state);
+  logEvent(state.repoRoot, "tui:enter:start", {
+    nodeId: node.id,
+    worktreeId: worktree.id,
+    worktreePath: worktree.path,
+    resumeMode: node.cc.resumeMode,
+    sessionId: node.cc.sessionId,
+    target: "current-tab",
+  });
+
+  try {
+    const result = await claude.attachOrResume(node, worktree.path, state.repoRoot, config);
+    logEvent(state.repoRoot, "tui:enter:attached", {
+      nodeId: node.id,
+      resultSessionId: result.sessionId,
+      alive: result.alive,
+      target: "current-tab",
+    });
+    node.cc.sessionId = result.sessionId;
+    node.cc.processId = null;
+    node.cc.resumeMode = result.sessionId ? "resume" : "new";
+    node.status = result.sessionId ? "LeafResumable" : "LeafNew";
+    node.updatedAt = new Date().toISOString();
+    saveSession(state.repoRoot, node);
+    saveState(state);
+    ui.focusId = node.id;
+    ui.message = "Claude session ended";
+    logEvent(state.repoRoot, "tui:enter:done", {
+      nodeId: node.id,
+      status: node.status,
+      focusId: ui.focusId,
+      sessionId: node.cc.sessionId,
+      target: "current-tab",
+    });
+  } catch (error) {
+    node.status = "JobFailed";
+    node.cc.processId = null;
+    node.error = error instanceof Error ? error.message : String(error);
+    saveState(state);
+    ui.message = node.error ?? "Failed to enter Claude";
+    logEvent(state.repoRoot, "tui:enter:error", {
+      nodeId: node.id,
+      error: node.error,
+      focusId: ui.focusId,
+      target: "current-tab",
+    });
+  }
+}
+
 function refreshDirtyStatuses(state: CcflowState, git: GitAdapter): void {
   for (const node of Object.values(state.nodes)) {
     if (!isLeafNode(state, node.id)) continue;
@@ -514,7 +607,7 @@ function refreshDirtyStatuses(state: CcflowState, git: GitAdapter): void {
   }
 }
 
-function renderApp(renderer: CliRenderer, state: CcflowState, ui: UiState): void {
+function renderApp(renderer: CliRenderer, state: CcflowState, ui: UiState, config?: CcflowConfig): void {
   try {
     renderer.root.remove("app");
   } catch {
@@ -547,10 +640,10 @@ function renderApp(renderer: CliRenderer, state: CcflowState, ui: UiState): void
           paddingTop: 1,
           gap: 1,
         },
-        ui.mode === "detail" ? detailPanel(state, focusNode, graphWidth, graphHeight) : graphPanel(state, ui, focusNode, graphWidth, graphHeight),
+        ui.mode === "detail" ? detailPanel(state, focusNode, graphWidth, graphHeight, config) : graphPanel(state, ui, focusNode, graphWidth, graphHeight),
         compact ? compactSummary(state, focusNode, ui) : sidePanel(state, focusNode, ui),
       ),
-      footer(ui),
+      footer(ui, config),
     ),
   );
 
@@ -753,8 +846,9 @@ function compactSummary(state: CcflowState, node: CcflowNode, ui: UiState) {
   );
 }
 
-function detailPanel(state: CcflowState, node: CcflowNode, width: number, height: number) {
+function detailPanel(state: CcflowState, node: CcflowNode, width: number, height: number, config?: CcflowConfig) {
   const worktree = getWorktree(state, node.git.worktreeId);
+  const launchMode = isMultitabEnabled(config) ? "new tab" : "current tab";
   const lines = [
     `id: ${node.id}`,
     `title: ${node.title}`,
@@ -770,7 +864,7 @@ function detailPanel(state: CcflowState, node: CcflowNode, width: number, height
     `parent job: ${node.pendingParentJobId ?? "none"}`,
     `blocked: ${node.blockedReason ?? "none"}`,
     `conflicts: ${node.conflictFiles?.join(", ") || "none"}`,
-    `cc launch: new tab`,
+    `cc launch: ${launchMode}`,
     `files changed: ${node.stats.filesChanged}`,
     `insertions: ${node.stats.insertions}`,
     `deletions: ${node.stats.deletions}`,
@@ -798,7 +892,8 @@ function detailPanel(state: CcflowState, node: CcflowNode, width: number, height
   );
 }
 
-function footer(ui: UiState) {
+function footer(ui: UiState, config?: CcflowConfig) {
+  const enterLabel = isMultitabEnabled(config) ? "enter tab/detail" : "enter claude/detail";
   return Box(
     {
       height: 2,
@@ -811,10 +906,14 @@ function footer(ui: UiState) {
         ? `${ui.inputMode.prompt}${ui.inputValue}█`
         : ui.mode === "detail"
           ? "esc graph   q quit"
-          : "arrows/hjkl move   enter tab/detail   tab next   shift+tab sibling   space select   m merge   s switch   d delete leaf   q quit",
+          : `arrows/hjkl move   ${enterLabel}   tab next   shift+tab sibling   space select   m merge   s switch   d delete leaf   q quit`,
       fg: ui.inputMode ? "#7dd3fc" : "#94a3b8",
     }),
   );
+}
+
+function isMultitabEnabled(config?: CcflowConfig): boolean {
+  return config?.terminal.multitab ?? false;
 }
 
 function field(label: string, value: string, color = "#cbd5e1") {
