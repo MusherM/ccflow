@@ -21,6 +21,7 @@ const env = isolatedEnv({
   CCFLOW_TEST_HOME: fakeHome,
   CCFLOW_REAL_HOME: realHome,
 });
+configureTestGitDefaults(env);
 
 const args = ["--test", "--test-concurrency=1"];
 if (coverage) {
@@ -79,6 +80,18 @@ function copyClaudeSettings(sourceHome, targetHome) {
   const target = path.join(targetHome, ".claude", "settings.json");
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.copyFileSync(source, target);
+}
+
+function configureTestGitDefaults(env) {
+  const result = spawnSync("git", ["config", "--global", "init.defaultBranch", "main"], {
+    cwd: projectRoot,
+    env,
+    encoding: "utf8",
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(result.stderr || result.stdout || "Failed to configure git default branch for tests");
+  }
 }
 
 function cleanupFakeHome(home) {

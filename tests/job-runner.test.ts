@@ -19,8 +19,14 @@ import { resetTerminalForChildProcess } from "../src/core/terminal.js";
 import type { CcflowState } from "../src/core/types.js";
 import { claudeCliConfig, withClaudeCliEnv } from "./helpers/claude-cli.js";
 
-test("creating the next leaf delegates the dirty-worktree commit to Claude Code", async () => {
-  const claude = claudeCliConfig();
+test("creating the next leaf delegates the dirty-worktree commit to Claude Code", async (t) => {
+  let claude: ReturnType<typeof claudeCliConfig>;
+  try {
+    claude = claudeCliConfig();
+  } catch (error) {
+    t.skip(`Claude Code CLI unavailable: ${(error as Error).message}`);
+    return;
+  }
   const { state, repoRoot } = createRepoState();
   const git = new GitAdapter();
   const readme = path.join(repoRoot, "README.md");
