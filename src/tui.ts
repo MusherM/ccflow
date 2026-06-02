@@ -29,6 +29,7 @@ import {
 } from "./core/tui-layout.js";
 import { buildToasterOverlay, TOASTER_OVERLAY_ID } from "./tui/toast-overlay.js";
 import {
+  createToastExpiryScheduler,
   emitTuiErrorToast,
   emitTuiToast,
   formatUnknownError,
@@ -174,11 +175,14 @@ async function runGraphOnce(
 
   let settled = false;
   let sessionPoll: NodeJS.Timeout | null = null;
+  let stopToastExpiryScheduler: (() => void) | null = null;
   const settle = (result: TuiExit) => {
     if (settled) return;
     settled = true;
     if (sessionPoll) clearInterval(sessionPoll);
     sessionPoll = null;
+    stopToastExpiryScheduler?.();
+    stopToastExpiryScheduler = null;
     logEvent(state.repoRoot, "tui:graph:settle-start", {
       kind: result.kind,
       nodeId: result.nodeId ?? null,
@@ -209,6 +213,10 @@ async function runGraphOnce(
   });
 
   const rerender = () => renderApp(renderer, state, ui, config);
+  const toastExpiryScheduler = createToastExpiryScheduler(toastStore, () => {
+    if (!settled) rerender();
+  });
+  stopToastExpiryScheduler = () => toastExpiryScheduler.dispose();
   const persistAndSaveState = () => {
     persistUiPreferences(state, ui);
     saveState(state);
@@ -480,6 +488,8 @@ async function runGraphOnce(
     if (!settled) {
       if (sessionPoll) clearInterval(sessionPoll);
       sessionPoll = null;
+      stopToastExpiryScheduler?.();
+      stopToastExpiryScheduler = null;
       logEvent(state.repoRoot, "tui:renderer:destroy-unexpected", {
         focusId: ui.focusId,
         currentNodeId: state.currentNodeId,

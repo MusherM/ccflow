@@ -65,4 +65,4 @@ src/
 
 ## Toast
 
-`src/core/toast.ts` 提供纯逻辑 API 和 `ToastStore`；`src/tui/toast-actions.ts` 提供模块级 `toastStore` 与 TUI emit helpers；`src/tui/toast-overlay.ts` 负责 OpenTUI 渲染。TUI 动作反馈优先通过 `emitTuiToast()` / `emitTuiErrorToast()` 发到模块级 `toastStore`，并保留原有 `ui.message` 作为侧边状态文字。进度类 toast 应使用同一个 id 从 `loading` 更新为 `success` / `error` / `warning`，避免留下持久 loading。
+`src/core/toast.ts` 提供纯逻辑 API 和 `ToastStore`；`src/tui/toast-actions.ts` 提供模块级 `toastStore`、TUI emit helpers 和 toast 过期调度器；`src/tui/toast-overlay.ts` 负责 OpenTUI 渲染。TUI 动作反馈优先通过 `emitTuiToast()` / `emitTuiErrorToast()` 发到模块级 `toastStore`，并保留原有 `ui.message` 作为侧边状态文字。TUI 主循环必须启动 `createToastExpiryScheduler()`，让 toast 到期后即使没有键盘/resize 事件也能 `tick()` 并重绘。进度类 toast 应使用同一个 id 从 `loading` 更新为 `success` / `error` / `warning`，避免留下持久 loading。

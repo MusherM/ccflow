@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { TOAST_DURATION } from "../src/core/toast.js";
-import { emitTuiErrorToast, emitTuiToast, toastStore } from "../src/tui/toast-actions.js";
+import { TOAST_DURATION, ToastStore } from "../src/core/toast.js";
+import {
+  createToastExpiryScheduler,
+  emitTuiErrorToast,
+  emitTuiToast,
+  toastStore,
+} from "../src/tui/toast-actions.js";
 
 test.beforeEach(() => {
   toastStore.dismiss();
@@ -59,3 +64,94 @@ test("TUI toast helper supports success, warning, info and loading defaults", ()
     TOAST_DURATION.PERSISTENT,
   ]);
 });
+
+test("TUI toast expiry scheduler ticks and notifies when the next toast expires", () => {
+  let now = 0;
+  const store = new ToastStore({ now: () => now });
+  const timers: FakeTimer[] = [];
+  let renders = 0;
+
+  const scheduler = createToastExpiryScheduler(
+    store,
+    () => {
+      renders += 1;
+    },
+    {
+      now: () => now,
+      setTimer: (callback, delay) => {
+        const timer: FakeTimer = {
+          callback,
+          delay,
+          cleared: false,
+          unrefCalled: false,
+          unref() {
+            this.unrefCalled = true;
+          },
+        };
+        timers.push(timer);
+        return timer as unknown as NodeJS.Timeout;
+      },
+      clearTimer: (timer) => {
+        (timer as unknown as FakeTimer).cleared = true;
+      },
+    },
+  );
+
+  store.add("done", { duration: 100 });
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0]?.delay, 100);
+  assert.equal(timers[0]?.unrefCalled, true);
+
+  now = 100;
+  timers[0]?.callback();
+
+  assert.equal(store.size(), 0);
+  assert.equal(renders, 1);
+
+  scheduler.dispose();
+});
+
+test("TUI toast expiry scheduler reschedules when a loading toast is promoted", () => {
+  let now = 0;
+  const store = new ToastStore({ now: () => now });
+  const timers: FakeTimer[] = [];
+
+  const scheduler = createToastExpiryScheduler(store, () => {}, {
+    now: () => now,
+    setTimer: (callback, delay) => {
+      const timer: FakeTimer = {
+        callback,
+        delay,
+        cleared: false,
+        unrefCalled: false,
+        unref() {
+          this.unrefCalled = true;
+        },
+      };
+      timers.push(timer);
+      return timer as unknown as NodeJS.Timeout;
+    },
+    clearTimer: (timer) => {
+      (timer as unknown as FakeTimer).cleared = true;
+    },
+  });
+
+  const id = store.add("loading", { type: "loading", duration: TOAST_DURATION.PERSISTENT });
+  assert.equal(timers.length, 0);
+
+  now = 50;
+  store.add("done", { id, type: "success", duration: 250 });
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0]?.delay, 250);
+
+  scheduler.dispose();
+  assert.equal(timers[0]?.cleared, true);
+});
+
+interface FakeTimer {
+  callback: () => void;
+  delay: number;
+  cleared: boolean;
+  unrefCalled: boolean;
+  unref: () => void;
+}
