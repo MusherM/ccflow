@@ -1,8 +1,10 @@
-# AGENTS.md
+# CLAUDE.md / AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+本文件被硬链接为 `CLAUDE.md` 与 `AGENTS.md` 两份，二者内容必须保持完全一致；任一处修改都应同步反映到另一处（实际由 inode 级硬链接保证）。
 
-CCFlow 是面向 Codex 的节点式会话和 Git 工作流管理器，状态存储在目标仓库的 `.ccflow/` 目录中。
+This file provides guidance to Claude Code (claude.ai/code) and other AI coding agents when working with code in this repository.
+
+CCFlow 是面向 Claude Code 的节点式会话和 Git 工作流管理器，状态存储在目标仓库的 `.ccflow/` 目录中。
 
 ## 开发命令
 
@@ -10,37 +12,37 @@ CCFlow 是面向 Codex 的节点式会话和 Git 工作流管理器，状态存�
 npm run dev -- --repo /path/to/repo   # 用 Bun 启动开发版 CLI/TUI
 npm run build                 # 编译发布用 dist/
 npm run typecheck             # 类型检查
-npm run test                  # 运行测试（含真实 Codex -p 验证）
+npm run test                  # 运行测试（含真实 claude -p 验证）
 npm run pack:dry-run          # 验证 npm 包内容
 npm run verify:install        # 生成 tarball 并在隔离 prefix 全局安装验证
 npm run proto:opentui         # 运行交互原型
-CCFLOW_CLAUDE_BIN=/path/to/Codex npm test   # 指定 Codex 二进制
+CCFLOW_CLAUDE_BIN=/path/to/claude npm test   # 指定 claude 二进制
 ```
 
 ## 架构
 
 ```
 src/
-  main.ts          # npm/bin 入口
-  cli.ts           # CLI 参数解析与命令分发
-  app.ts           # CLI 到 TUI 的启动边界
-  tui.ts           # OpenTUI 节点图交互（键盘分发、状态机）
+  main.ts              # npm/bin 入口
+  cli.ts               # CLI 参数解析与命令分发
+  app.ts               # CLI 到 TUI 的启动边界
+  tui.ts               # OpenTUI 节点图交互（键盘分发、状态机）
   tui/
-    toast-actions.ts # TUI toast 适配层（store + emit helpers，无渲染依赖）
-    toast-overlay.ts # 右上角 toast 浮层（订阅 core/toast.ts）
+    toast-actions.ts   # TUI toast 适配层（store + emit helpers，过期调度器）
+    toast-overlay.ts   # 右上角 toast 浮层（订阅 core/toast.ts）
   core/
-    graph.ts       # 节点 DAG + 不变量断言（系统边界，修改前先补测试）
-    storage.ts     # .ccflow JSON 读写
-    config.ts      # 分层配置加载、校验、来源追踪
-    repo.ts        # Git repo / CCFlow owner repo 解析与 init
-    git.ts         # Git/worktree 操作
-    Codex.ts      # Codex 会话管理
-    jobs.ts        # commit/merge job runner（独立 Codex 进程）
-    toast.ts       # 纯逻辑 toast 核心（无渲染依赖、可单测）
-    types.ts       # 数据模型
+    graph.ts           # 节点 DAG + 不变量断言（系统边界，修改前先补测试）
+    storage.ts         # .ccflow JSON 读写
+    config.ts          # 分层配置加载、校验、来源追踪
+    repo.ts            # Git repo / CCFlow owner repo 解析与 init
+    git.ts             # Git/worktree 操作
+    claude.ts          # Claude Code 会话管理
+    jobs.ts            # commit/merge job runner（独立 Claude Code 进程）
+    toast.ts           # 纯逻辑 toast 核心（无渲染依赖、可单测）
+    types.ts           # 数据模型
 ```
 
-**状态流**：main.ts → cli.ts 解析命令 → app.ts/repo.ts 解析仓库与配置 → normalizeAfterBoot 清理进程残留 → TUI 处理所有交互（node 创建、切换、commit、merge、delete）→ storage.ts 持久化。TUI 动作通过 `src/tui/toast-actions.ts` 发临时 toast；`renderApp` 每帧会挂载 `buildToasterOverlay(toastStore)`，toast 作为临时反馈层与侧边面板的持久 `ui.message` 并存。
+**状态流**：main.ts → cli.ts 解析命令 → app.ts/repo.ts 解析仓库与配置 → normalizeAfterBoot 清理进程残留 → TUI 处理所有交互（node 创建、切换、commit、merge、delete）→ storage.ts 持久化。TUI 动作通过 `src/tui/toast-actions.ts` 发临时 toast；每一帧 `renderApp` 会先 `toastStore.tick()` 再挂载 `buildToasterOverlay(toastStore)` 到 renderer.root；toast 核心模块本身无渲染耦合，未来可换实现。
 
 **不变量**（graph.ts:assertGraphInvariants）：
 
@@ -49,20 +51,22 @@ src/
 - 正好一个 worktree 是 current
 - 节点双向引用（父子节点互相指向）
 
+## Toast
+
+`src/core/toast.ts` 提供 Sonner 风格的纯逻辑 API（`toast()`、`toast.success/.error/.warning/.info/.loading/.promise`），无渲染依赖，便于单测。`src/tui/toast-actions.ts` 暴露模块级 `toastStore`、`emitTuiToast()` / `emitTuiErrorToast()` 与 `createToastExpiryScheduler()`，TUI 进度类通知使用同一 id 从 `loading` 更新为 `success` / `error` / `warning`。`src/tui/toast-overlay.ts` 渲染层订阅 `ToastStore.list()` 把它画到 renderer.root 的 `position:absolute` 右上角浮层。
+
+TUI 主循环必须启动 `createToastExpiryScheduler()`，让 toast 到期后即使没有键盘 / resize 事件也能 `tick()` 并触发重绘；`settle` 与意外 renderer 销毁时统一 `dispose`。当前 `ui.message` 仍是侧边面板的持久状态字段，与 toast 浮层并存（不冲突）；适配结果见 `dev/toast-implementation-report.html`。
+
 ## 规则
 
 - 永远用中文回复用户。
-- 核心工作流、TUI 交互、架构或数据模型变化时，必须同步更新 `AGENTS.md`。
+- 核心工作流、TUI 交互、架构或数据模型变化时，必须同步更新本文件（`CLAUDE.md` 与 `AGENTS.md` 是同一 inode，修改任一即生效）。
 - 每当更新 `README.md` 时，必须同步更新 `README_zh.md`，保持英文和中文 README 的安装、首次运行、命令、配置和发布说明语义一致。
 - CCFlow 不提供 basic TUI fallback；启动时必须让 OpenTUI 可用，优先通过 `bun` 运行发布入口。
 - `src/core/graph.ts` 中的不变量是系统边界，修改前先补测试。
-- 所有涉及 Codex/cc 的测试必须走真实 cc 流程，不能用 fake/stub/mock 替代；需要直接在沙箱外运行测试，确保 `Codex`/`cc` CLI 能被真实调用起来。
+- 所有涉及 Claude Code / cc 的测试必须走真实 cc 流程，不能用 fake / stub / mock 替代；需要直接在沙箱外运行测试，确保 `claude` / `cc` CLI 能被真实调用起来。
 - npm 发布相关修改必须保持 `package.json#files` 为显式白名单，并用 `npm run pack:dry-run` 检查 tarball 内容。
-- Prompt 配置默认只能追加指导，不允许项目共享配置完整替换 commit/merge kernel prompt；CCFlow 依赖这些 kernel 指令维持 job 后置条件。
+- Prompt 配置默认只能追加指导，不允许项目共享配置完整替换 commit / merge kernel prompt；CCFlow 依赖这些 kernel 指令维持 job 后置条件。
 - `.ccflow/` 是运行时状态目录；共享项目配置使用仓库根目录 `.ccflowrc`，本机项目覆盖使用 `.ccflow/config.local.json`。
-- 如果 ccflow 有新的参数，需要同步更新 --help 中的内容
-- 在任何需要输出文档的时候，都应该优先采用html格式
-
-## Toast
-
-`src/core/toast.ts` 提供纯逻辑 API 和 `ToastStore`；`src/tui/toast-actions.ts` 提供模块级 `toastStore`、TUI emit helpers 和 toast 过期调度器；`src/tui/toast-overlay.ts` 负责 OpenTUI 渲染。TUI 动作反馈优先通过 `emitTuiToast()` / `emitTuiErrorToast()` 发到模块级 `toastStore`，并保留原有 `ui.message` 作为侧边状态文字。TUI 主循环必须启动 `createToastExpiryScheduler()`，让 toast 到期后即使没有键盘/resize 事件也能 `tick()` 并重绘。进度类 toast 应使用同一个 id 从 `loading` 更新为 `success` / `error` / `warning`，避免留下持久 loading。
+- 如果 ccflow 有新的参数，需要同步更新 --help 中的内容。
+- 在任何需要输出文档的时候，都应该优先采用 html 格式。
