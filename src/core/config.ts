@@ -178,7 +178,7 @@ export function defaultCcflowConfig(): CcflowConfig {
 }
 
 export function resolveConfigPaths(repoRoot?: string, env: NodeJS.ProcessEnv = process.env): ConfigPaths {
-  const home = os.homedir();
+  const home = env.HOME || env.USERPROFILE || os.homedir();
   const xdgBase = env.XDG_CONFIG_HOME || path.join(home, ".config");
   const homeGlobalPath = path.join(home, ".ccflowrc");
   const xdgGlobalPath = path.join(xdgBase, "ccflow", "config.json");

@@ -45,6 +45,10 @@ test("resolveConfigPaths honors XDG_CONFIG_HOME and CCFLOW_CONFIG override", () 
   assert.equal(paths.xdgGlobalPath, "/home/me/.config/ccflow/config.json");
   assert.equal(paths.repoSharedPath, "/repo/.ccflowrc");
   assert.equal(paths.repoLocalPath, "/repo/.ccflow/config.local.json");
+
+  const homeOnlyPaths = resolveConfigPaths("/repo", { HOME: "/isolated/home" });
+  assert.equal(homeOnlyPaths.userGlobalPath, "/isolated/home/.ccflowrc");
+  assert.equal(homeOnlyPaths.xdgGlobalPath, "/isolated/home/.config/ccflow/config.json");
 });
 
 test("loadConfig honors env-only config when no files exist", () => {
