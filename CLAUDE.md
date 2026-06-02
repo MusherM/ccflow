@@ -21,22 +21,26 @@ CCFLOW_CLAUDE_BIN=/path/to/claude npm test   # 指定 claude 二进制
 
 ```
 src/
-  main.ts          # npm/bin 入口
-  cli.ts           # CLI 参数解析与命令分发
-  app.ts           # CLI 到 TUI 的启动边界
-  tui.ts           # OpenTUI 节点图交互（键盘分发、状态机）
+  main.ts              # npm/bin 入口
+  cli.ts               # CLI 参数解析与命令分发
+  app.ts               # CLI 到 TUI 的启动边界
+  tui.ts               # OpenTUI 节点图交互（键盘分发、状态机）
+  tui/
+    toast-actions.ts   # TUI toast 适配层（store + emit helpers，无渲染依赖）
+    toast-overlay.ts   # 右上角 toast 浮层（订阅 core/toast.ts）
   core/
-    graph.ts       # 节点 DAG + 不变量断言（系统边界，修改前先补测试）
-    storage.ts     # .ccflow JSON 读写
-    config.ts      # 分层配置加载、校验、来源追踪
-    repo.ts        # Git repo / CCFlow owner repo 解析与 init
-    git.ts         # Git/worktree 操作
-    claude.ts      # Claude Code 会话管理
-    jobs.ts        # commit/merge job runner（独立 Claude Code 进程）
-    types.ts       # 数据模型
+    graph.ts           # 节点 DAG + 不变量断言（系统边界，修改前先补测试）
+    storage.ts         # .ccflow JSON 读写
+    config.ts          # 分层配置加载、校验、来源追踪
+    repo.ts            # Git repo / CCFlow owner repo 解析与 init
+    git.ts             # Git/worktree 操作
+    claude.ts          # Claude Code 会话管理
+    jobs.ts            # commit/merge job runner（独立 Claude Code 进程）
+    toast.ts           # 纯逻辑 toast 核心（无渲染依赖、可单测）
+    types.ts           # 数据模型
 ```
 
-**状态流**：main.ts → cli.ts 解析命令 → app.ts/repo.ts 解析仓库与配置 → normalizeAfterBoot 清理进程残留 → TUI 处理所有交互（node 创建、切换、commit、merge、delete）→ storage.ts 持久化。
+**状态流**：main.ts → cli.ts 解析命令 → app.ts/repo.ts 解析仓库与配置 → normalizeAfterBoot 清理进程残留 → TUI 处理所有交互（node 创建、切换、commit、merge、delete）→ storage.ts 持久化。TUI 动作通过 `src/tui/toast-actions.ts` 发临时 toast；每一帧 `renderApp` 会先 `toastStore.tick()` 再挂载 `buildToasterOverlay(toastStore)` 到 renderer.root；toast 核心模块本身无渲染耦合，未来可换实现。
 
 **不变量**（graph.ts:assertGraphInvariants）：
 
@@ -58,3 +62,7 @@ src/
 - `.ccflow/` 是运行时状态目录；共享项目配置使用仓库根目录 `.ccflowrc`，本机项目覆盖使用 `.ccflow/config.local.json`。
 - 如果 ccflow 有新的参数，需要同步更新 --help 中的内容
 - 在任何需要输出文档的时候，都应该优先采用html格式
+
+## Toast
+
+`src/core/toast.ts` 提供 Sonner 风格的纯逻辑 API（`toast()`、`toast.success/.error/.warning/.info/.loading/.promise`），无渲染依赖，便于单测。`src/tui/toast-actions.ts` 暴露模块级 `toastStore` 与 `emitTuiToast()` / `emitTuiErrorToast()`，TUI 进度类通知使用同一 id 从 `loading` 更新为 `success` / `error` / `warning`。`src/tui/toast-overlay.ts` 渲染层订阅 `ToastStore.list()` 把它画到 renderer.root 的 `position:absolute` 右上角浮层。当前 `ui.message` 仍是侧边面板的持久状态字段，与 toast 浮层并存（不冲突）；适配结果见 `dev/toast-implementation-report.html`。

@@ -25,6 +25,9 @@ src/
   cli.ts           # CLI 参数解析与命令分发
   app.ts           # CLI 到 TUI 的启动边界
   tui.ts           # OpenTUI 节点图交互（键盘分发、状态机）
+  tui/
+    toast-actions.ts # TUI toast 适配层（store + emit helpers，无渲染依赖）
+    toast-overlay.ts # 右上角 toast 浮层（订阅 core/toast.ts）
   core/
     graph.ts       # 节点 DAG + 不变量断言（系统边界，修改前先补测试）
     storage.ts     # .ccflow JSON 读写
@@ -33,10 +36,11 @@ src/
     git.ts         # Git/worktree 操作
     Codex.ts      # Codex 会话管理
     jobs.ts        # commit/merge job runner（独立 Codex 进程）
+    toast.ts       # 纯逻辑 toast 核心（无渲染依赖、可单测）
     types.ts       # 数据模型
 ```
 
-**状态流**：main.ts → cli.ts 解析命令 → app.ts/repo.ts 解析仓库与配置 → normalizeAfterBoot 清理进程残留 → TUI 处理所有交互（node 创建、切换、commit、merge、delete）→ storage.ts 持久化。
+**状态流**：main.ts → cli.ts 解析命令 → app.ts/repo.ts 解析仓库与配置 → normalizeAfterBoot 清理进程残留 → TUI 处理所有交互（node 创建、切换、commit、merge、delete）→ storage.ts 持久化。TUI 动作通过 `src/tui/toast-actions.ts` 发临时 toast；`renderApp` 每帧会挂载 `buildToasterOverlay(toastStore)`，toast 作为临时反馈层与侧边面板的持久 `ui.message` 并存。
 
 **不变量**（graph.ts:assertGraphInvariants）：
 
@@ -58,3 +62,7 @@ src/
 - `.ccflow/` 是运行时状态目录；共享项目配置使用仓库根目录 `.ccflowrc`，本机项目覆盖使用 `.ccflow/config.local.json`。
 - 如果 ccflow 有新的参数，需要同步更新 --help 中的内容
 - 在任何需要输出文档的时候，都应该优先采用html格式
+
+## Toast
+
+`src/core/toast.ts` 提供纯逻辑 API 和 `ToastStore`；`src/tui/toast-actions.ts` 提供模块级 `toastStore` 与 TUI emit helpers；`src/tui/toast-overlay.ts` 负责 OpenTUI 渲染。TUI 动作反馈优先通过 `emitTuiToast()` / `emitTuiErrorToast()` 发到模块级 `toastStore`，并保留原有 `ui.message` 作为侧边状态文字。进度类 toast 应使用同一个 id 从 `loading` 更新为 `success` / `error` / `warning`，避免留下持久 loading。

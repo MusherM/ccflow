@@ -27,8 +27,26 @@ import {
   sanitizeGraphViewport,
   type GraphViewport,
 } from "./core/tui-layout.js";
+import { buildToasterOverlay, TOASTER_OVERLAY_ID } from "./tui/toast-overlay.js";
+import {
+  emitTuiErrorToast,
+  emitTuiToast,
+  formatUnknownError,
+  isToastStillLoading,
+  mergeToastDescription,
+  toastStore,
+} from "./tui/toast-actions.js";
 import type { CcflowNode, CcflowState } from "./core/types.js";
 import type { CcflowConfig } from "./core/config.js";
+
+interface ActionToastResult {
+  message: string;
+  description?: string;
+}
+
+interface EnterLeafOptions {
+  toastId?: string;
+}
 
 type Direction = "left" | "right" | "up" | "down";
 type UiMode = "graph" | "detail";
@@ -200,18 +218,28 @@ async function runGraphOnce(
     persistAndSaveState();
     return true;
   };
-  const runAction = async (label: string, action: () => Promise<void> | void) => {
+  const runAction = async (
+    label: string,
+    action: (toastId: string) => Promise<ActionToastResult | void> | ActionToastResult | void,
+  ) => {
     if (ui.busy) return;
     ui.busy = true;
     ui.task = label;
     ui.message = label;
+    const toastId = emitTuiToast("loading", label);
     rerender();
     try {
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      await action();
+      const result = await action(toastId);
+      if (result) {
+        emitTuiToast("success", result.message, { id: toastId, description: result.description });
+      } else if (isToastStillLoading(toastId)) {
+        toastStore.dismiss(toastId);
+      }
       persistAndSaveState();
     } catch (error) {
-      ui.message = error instanceof Error ? error.message : String(error);
+      ui.message = formatUnknownError(error);
+      emitTuiErrorToast("Action failed", error, toastId);
     } finally {
       ui.busy = false;
       ui.task = null;
@@ -290,13 +318,15 @@ async function runGraphOnce(
         return;
       }
       if (!isEditableLeaf(state, node.id) && node.status !== "MergeConflict") {
-        ui.message = node.blockedReason || node.error || `Node is not editable: ${node.status}`;
+        const reason = node.blockedReason || node.error || `Node is not editable: ${node.status}`;
+        ui.message = reason;
+        emitTuiToast("error", "Node blocked", { description: reason });
         rerender();
         return;
       }
       if (isMultitabEnabled(config)) {
-        void runAction("opening node tab...", async () => {
-          await enterLeaf(state, node.id, claude, ui, config);
+        void runAction("opening node tab...", async (toastId) => {
+          await enterLeaf(state, node.id, claude, ui, config, { toastId });
         });
         return;
       }
@@ -332,6 +362,7 @@ async function runGraphOnce(
             ui.selectedIds.clear();
             ui.mode = "graph";
             ui.message = `Created sibling ${sibling.id}`;
+            return { message: `Created sibling ${sibling.id}` };
           });
         },
         onCancel: () => {
@@ -341,6 +372,7 @@ async function runGraphOnce(
             ui.selectedIds.clear();
             ui.mode = "graph";
             ui.message = `Created sibling ${sibling.id}`;
+            return { message: `Created sibling ${sibling.id}` };
           });
         },
       };
@@ -357,6 +389,10 @@ async function runGraphOnce(
         ui.selectedIds.clear();
         ui.mode = "graph";
         ui.message = child.status === "AwaitingParentCommit" ? `Created ${child.id}; parent commit running` : `Created ${child.id}`;
+        return {
+          message: `Created ${child.id}`,
+          description: child.status === "AwaitingParentCommit" ? "parent commit running" : undefined,
+        };
       });
       key.preventDefault();
       return;
@@ -370,6 +406,7 @@ async function runGraphOnce(
         ui.selectedIds.clear();
         ui.mode = "graph";
         ui.message = `Deleted leaf; reset to ${focus.id}`;
+        return { message: "Deleted leaf", description: `reset to ${focus.id}` };
       });
       return;
     }
@@ -392,6 +429,7 @@ async function runGraphOnce(
         }
         const worktree = switchCurrentWorktree(state, node.id);
         ui.message = `Current worktree: ${worktree.path}`;
+        return { message: "Switched worktree", description: worktree.path };
       });
       return;
     }
@@ -401,6 +439,7 @@ async function runGraphOnce(
       ui.busy = true;
       ui.task = "merging...";
       ui.message = "merging...";
+      const toastId = emitTuiToast("loading", "merging...");
       rerender();
       (async () => {
         try {
@@ -410,6 +449,7 @@ async function runGraphOnce(
           ui.focusId = merge.id;
           ui.selectedIds.clear();
           if (merge.status === "MergeConflict") {
+            emitTuiToast("warning", "Merge conflict", { id: toastId, description: mergeToastDescription(merge) });
             if (isMultitabEnabled(config)) {
               await enterLeaf(state, merge.id, claude, ui, config);
             } else {
@@ -420,8 +460,10 @@ async function runGraphOnce(
             return;
           }
           ui.message = `Merge node ${merge.id}`;
+          emitTuiToast("success", `Merge node ${merge.id}`, { id: toastId });
         } catch (error) {
-          ui.message = error instanceof Error ? error.message : String(error);
+          ui.message = formatUnknownError(error);
+          emitTuiErrorToast("Merge failed", error, toastId);
         } finally {
           if (!settled) {
             ui.busy = false;
@@ -467,12 +509,13 @@ async function enterLeaf(
   claude: ClaudeAdapter,
   ui: UiState,
   config?: CcflowConfig,
+  options: EnterLeafOptions = {},
 ): Promise<void> {
   if (isMultitabEnabled(config)) {
-    await enterLeafInTerminalTab(state, nodeId, ui, config);
+    await enterLeafInTerminalTab(state, nodeId, ui, config, options);
     return;
   }
-  await enterLeafInCurrentTab(state, nodeId, claude, ui, config);
+  await enterLeafInCurrentTab(state, nodeId, claude, ui, config, options);
 }
 
 async function enterLeafInTerminalTab(
@@ -480,6 +523,7 @@ async function enterLeafInTerminalTab(
   nodeId: string,
   ui: UiState,
   config?: CcflowConfig,
+  options: EnterLeafOptions = {},
 ): Promise<void> {
   const node = getNode(state, nodeId);
   const worktree = getWorktree(state, node.git.worktreeId);
@@ -502,6 +546,7 @@ async function enterLeafInTerminalTab(
     });
     ui.focusId = node.id;
     ui.message = `Opened ${node.id} in ${terminalName} ${target}`;
+    emitTuiToast("success", `Opened ${node.id}`, { id: options.toastId, description: `${terminalName} ${target}` });
     logEvent(state.repoRoot, "tui:enter:done", {
       nodeId: node.id,
       status: node.status,
@@ -511,7 +556,8 @@ async function enterLeafInTerminalTab(
       target,
     });
   } catch (error) {
-    ui.message = error instanceof Error ? error.message : String(error);
+    ui.message = formatUnknownError(error);
+    emitTuiErrorToast("Cannot open Claude", error, options.toastId);
     logEvent(state.repoRoot, "tui:enter:error", {
       nodeId: node.id,
       error: ui.message,
@@ -526,6 +572,7 @@ async function enterLeafInCurrentTab(
   claude: ClaudeAdapter,
   ui: UiState,
   config?: CcflowConfig,
+  options: EnterLeafOptions = {},
 ): Promise<void> {
   const node = getNode(state, nodeId);
   const worktree = getWorktree(state, node.git.worktreeId);
@@ -565,6 +612,7 @@ async function enterLeafInCurrentTab(
     saveState(state);
     ui.focusId = node.id;
     ui.message = "Claude session ended";
+    emitTuiToast("success", "Claude session ended", { id: options.toastId });
     logEvent(state.repoRoot, "tui:enter:done", {
       nodeId: node.id,
       status: node.status,
@@ -578,6 +626,7 @@ async function enterLeafInCurrentTab(
     node.error = error instanceof Error ? error.message : String(error);
     saveState(state);
     ui.message = node.error ?? "Failed to enter Claude";
+    emitTuiToast("error", "Cannot open Claude", { id: options.toastId, description: ui.message });
     logEvent(state.repoRoot, "tui:enter:error", {
       nodeId: node.id,
       error: node.error,
@@ -613,6 +662,11 @@ function renderApp(renderer: CliRenderer, state: CcflowState, ui: UiState, confi
   } catch {
     // First render has no app tree yet.
   }
+  try {
+    renderer.root.remove(TOASTER_OVERLAY_ID);
+  } catch {
+    // First render has no toaster overlay yet.
+  }
 
   const width = Math.max(76, renderer.terminalWidth || renderer.width || 120);
   const height = Math.max(26, renderer.terminalHeight || renderer.height || 36);
@@ -646,6 +700,7 @@ function renderApp(renderer: CliRenderer, state: CcflowState, ui: UiState, confi
       footer(ui, config),
     ),
   );
+  renderer.root.add(buildToasterOverlay(toastStore));
 
   renderer.requestRender();
 }
@@ -666,7 +721,10 @@ function ensureUiFocus(state: CcflowState, ui: UiState): CcflowNode {
 
   ui.focusId = fallback.id;
   ui.mode = "graph";
-  ui.message = ui.message || `Focus moved to ${fallback.id}`;
+  if (!ui.message) {
+    ui.message = `Focus moved to ${fallback.id}`;
+    emitTuiToast("info", ui.message);
+  }
   return fallback;
 }
 

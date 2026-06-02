@@ -1,0 +1,789 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>CCFlow Toast 实现报告 — 2026-06-02</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --panel: #11172a;
+    --panel-2: #161d34;
+    --border: #233052;
+    --fg: #e6ebf5;
+    --muted: #8a96b5;
+    --accent: #7dd3fc;
+    --accent-2: #a78bfa;
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --error: #ef4444;
+    --info: #3b82f6;
+    --loading: #38bdf8;
+    --code-bg: #0a0f1e;
+    --code-fg: #cbd5e1;
+    --code-kw: #c4b5fd;
+    --code-fn: #7dd3fc;
+    --code-str: #86efac;
+    --code-num: #fbbf24;
+    --code-comment: #64748b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: linear-gradient(180deg, #060a18 0%, #0b1020 100%);
+    color: var(--fg);
+    font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    padding: 32px 24px 80px;
+  }
+  .container { max-width: 1180px; margin: 0 auto; }
+  header {
+    border: 1px solid var(--border);
+    background: linear-gradient(135deg, rgba(125,211,252,0.07), rgba(167,139,250,0.07));
+    border-radius: 14px;
+    padding: 28px 32px;
+    margin-bottom: 28px;
+  }
+  header .badge {
+    display: inline-block;
+    background: rgba(125,211,252,0.12);
+    color: var(--accent);
+    border: 1px solid rgba(125,211,252,0.3);
+    border-radius: 999px;
+    padding: 4px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  header h1 {
+    margin: 12px 0 8px;
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  header p { margin: 0; color: var(--muted); font-size: 14.5px; }
+  h2 {
+    font-size: 20px;
+    font-weight: 700;
+    margin: 36px 0 14px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    letter-spacing: -0.005em;
+  }
+  h3 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 22px 0 10px;
+    color: var(--accent);
+  }
+  h4 { font-size: 14.5px; font-weight: 600; margin: 18px 0 6px; color: var(--fg); }
+  p { margin: 8px 0; color: var(--fg); }
+  .muted { color: var(--muted); font-size: 13.5px; }
+  .grid { display: grid; gap: 16px; }
+  .grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+  .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+  @media (max-width: 900px) { .grid.cols-3, .grid.cols-4 { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 640px) { .grid.cols-2, .grid.cols-3, .grid.cols-4 { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+  }
+  .card h4 { margin-top: 0; }
+  .stat {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .stat .num {
+    font-size: 28px;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    line-height: 1.1;
+  }
+  .stat .label { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+  .stat .sub { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+  .pill {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    border: 1px solid;
+  }
+  .pill.success { color: var(--success); border-color: rgba(34,197,94,0.4); background: rgba(34,197,94,0.08); }
+  .pill.error   { color: var(--error);   border-color: rgba(239,68,68,0.4);  background: rgba(239,68,68,0.08); }
+  .pill.warning { color: var(--warning); border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.08); }
+  .pill.info    { color: var(--info);    border-color: rgba(59,130,246,0.4); background: rgba(59,130,246,0.08); }
+  .pill.loading { color: var(--loading); border-color: rgba(56,189,248,0.4); background: rgba(56,189,248,0.08); }
+  .pill.default { color: var(--muted);  border-color: var(--border);       background: rgba(138,150,181,0.06); }
+  .pill.refactor{ color: var(--accent-2); border-color: rgba(167,139,250,0.4); background: rgba(167,139,250,0.08); }
+  pre.code {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, "Cascadia Code", monospace;
+    color: var(--code-fg);
+    margin: 10px 0;
+  }
+  pre.code .kw   { color: var(--code-kw); }
+  pre.code .fn   { color: var(--code-fn); }
+  pre.code .str  { color: var(--code-str); }
+  pre.code .num  { color: var(--code-num); }
+  pre.code .com  { color: var(--code-comment); font-style: italic; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 13.5px;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th {
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  tr:last-child td { border-bottom: none; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .arch-diagram {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    font: 12.5px/1.6 ui-monospace, SFMono-Regular, monospace;
+    color: var(--code-fg);
+    overflow-x: auto;
+    white-space: pre;
+  }
+  .ok   { color: var(--success); font-weight: 600; }
+  .warn { color: var(--warning); font-weight: 600; }
+  .err  { color: var(--error);   font-weight: 600; }
+  footer {
+    margin-top: 40px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 12.5px;
+    text-align: center;
+  }
+  ul { padding-left: 22px; }
+  ul li { margin: 4px 0; }
+  .scenario {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin: 8px 0;
+  }
+  .scenario.success  { border-left-color: var(--success); }
+  .scenario.error    { border-left-color: var(--error); }
+  .scenario.warning  { border-left-color: var(--warning); }
+  .scenario.info     { border-left-color: var(--info); }
+  .scenario.loading  { border-left-color: var(--loading); }
+  .scenario.default  { border-left-color: var(--muted); }
+  .scenario .head {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+  }
+  .scenario .file {
+    color: var(--muted);
+    font: 12px ui-monospace, monospace;
+  }
+  .scenario .old, .scenario .new {
+    font: 12px/1.5 ui-monospace, monospace;
+    color: var(--code-fg);
+  }
+  .scenario .arrow { color: var(--muted); padding: 0 6px; }
+  .scenario .old  { color: #fca5a5; }
+  .scenario .new  { color: #86efac; }
+  details {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 14px;
+    margin: 8px 0;
+  }
+  details summary {
+    cursor: pointer;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  details[open] summary { margin-bottom: 8px; }
+  .legend {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: 8px;
+  }
+  .bar {
+    background: var(--panel-2);
+    border-radius: 6px;
+    overflow: hidden;
+    height: 8px;
+    margin: 6px 0;
+  }
+  .bar > span {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, var(--success), #16a34a);
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <span class="badge">Implementation Report</span>
+    <h1>CCFlow Toast 库 — 实现与迁移报告</h1>
+    <p>2026-06-02 · 位置：右上角 · 场景适配 16/16 · toast 相关单测 47 项 · 本次验证通过</p>
+  </header>
+
+  <!-- ─────────── 概览指标 ─────────── -->
+  <section class="grid cols-4">
+    <div class="stat">
+      <div class="num">47</div>
+      <div class="label">toast 相关单元测试</div>
+      <div class="sub">44 core + 3 TUI adapter</div>
+    </div>
+    <div class="stat">
+      <div class="num">16/16</div>
+      <div class="label">已适配场景</div>
+      <div class="sub">error / success / loading / info</div>
+    </div>
+    <div class="stat">
+      <div class="num">3/3</div>
+      <div class="label">TUI smoke（过滤）</div>
+      <div class="sub">delete / blocked / viewport</div>
+    </div>
+    <div class="stat">
+      <div class="num">0</div>
+      <div class="label">新增依赖</div>
+      <div class="sub">仍基于 @opentui/core</div>
+    </div>
+  </section>
+
+  <!-- ─────────── 1. 设计 ─────────── -->
+  <h2>1. 设计与架构</h2>
+  <p>toast 系统采用 <b>核心 / 渲染 双层分离</b>：核心是纯逻辑，可在没有 OpenTUI 的环境单测；渲染层是 OpenTUI 特定的薄壳，订阅核心快照后构造 OpenTUI 节点树。</p>
+
+  <div class="arch-diagram">src/core/toast.ts                 (pure logic, 0 渲染依赖)
+┌────────────────────────────────────────────────────────────────┐
+│  ToastEntry   { id, type, message, description, duration, ... } │
+│  ToastStore   { add, update, dismiss, tick, list, onDismiss, ... }│
+│  toastPromise(store, promise, { loading, success, error })     │
+│  toastApi    = Sonner-flavoured shortcuts (success/error/...)  │
+│  TOAST_DURATION = { SHORT, DEFAULT, LONG, EXTENDED, PERSISTENT }│
+│  Default singleton store (resettable via __resetDefaultToastStore)│
+└────────────────────────────────────────────────────────────────┘
+                              │ list() / tick()
+                              ▼
+src/tui/toast-actions.ts       (TUI 适配, 0 渲染依赖)
+┌────────────────────────────────────────────────────────────────┐
+│  toastStore singleton + emitTuiToast / emitTuiErrorToast       │
+│  - loading 使用 persistent，成功/失败用同一 id 原地替换           │
+│  - 保留 ui.message，同时补临时 toast 反馈                        │
+└────────────────────────────────────────────────────────────────┘
+                              │ store
+                              ▼
+src/tui/toast-overlay.ts       (OpenTUI 渲染, 右上角)
+┌────────────────────────────────────────────────────────────────┐
+│  buildToasterOverlay(store, options) → BoxRenderable           │
+│  - position: "absolute", top: 1, right: 1, zIndex: 100        │
+│  - 默认最多 5 条同时可见（oldest 截断）                          │
+│  - 默认 maxWidth: 48 列                                       │
+│  - 6 种 type 的图标 + 颜色 (success/error/warning/info/loading) │
+│  - 空队列时渲染 0×0 占位，避免布局抖动                          │
+└────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+src/tui.ts:renderApp()         (集成点, 已有)
+renderer.root.add(buildToasterOverlay(toastStore))   ← 每帧重建</div>
+
+  <h3>1.1 关键设计决策</h3>
+  <ul>
+    <li><b>无渲染依赖的核心</b>：让 toast 可以在 200ms 内跑完所有单测，不依赖 PTY/OpenTUI 渲染线程。</li>
+    <li><b>tick 由调用方驱动</b>：核心不内置 timer；TUI 的 <code>renderApp</code> 在每帧重建 toaster 时调用 <code>store.tick()</code>。这让测试可以注入 fake clock 精确控制时间。</li>
+    <li><b>位置：右上角</b>：通过 OpenTUI 的 <code>position: "absolute"</code> + <code>top: 1, right: 1</code> 实现。YAML 化的配置未来可以加 <code>toast.position</code> 选项。</li>
+    <li><b>零新增依赖</b>：完全基于已装的 <code>@opentui/core@^0.2.14</code>（Box / 绝对定位 / zIndex）。生态内的 <code>@opentui-ui/toast</code> 有 peer-dep 不兼容问题（要求 ^0.1.63），自研最干净。</li>
+    <li><b>toastApi 懒查询 singleton</b>：<code>__resetDefaultToastStore()</code> 后 <code>toastApi.list()</code> 会反映重置后的状态，对测试隔离友好。</li>
+  </ul>
+
+  <!-- ─────────── 2. API ─────────── -->
+  <h2>2. API 参考</h2>
+
+  <h3>2.1 入口</h3>
+  <pre class="code"><span class="kw">import</span> { <span class="fn">toast</span>, <span class="fn">toastApi</span>, <span class="fn">toastPromise</span>, <span class="fn">ToastStore</span>, <span class="fn">TOAST_DURATION</span> } <span class="kw">from</span> <span class="str">"./core/toast.js"</span>;
+<span class="kw">import</span> { <span class="fn">emitTuiToast</span>, <span class="fn">emitTuiErrorToast</span>, <span class="fn">toastStore</span> } <span class="kw">from</span> <span class="str">"./tui/toast-actions.js"</span>;
+<span class="kw">import</span> { <span class="fn">buildToasterOverlay</span>, <span class="fn">TOASTER_OVERLAY_ID</span> } <span class="kw">from</span> <span class="str">"./tui/toast-overlay.js"</span>;</pre>
+
+  <h3>2.2 公共方法</h3>
+  <table>
+    <thead>
+      <tr><th>API</th><th>类型</th><th>说明</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>toast(msg, opts?)</code></td><td>function</td><td>在默认 singleton store 上添加一条 default 类型的 toast，返回 id。</td></tr>
+      <tr><td><code>toast.success / .error / .warning / .info / .loading</code></td><td>function</td><td>同上但预设 type，自动选用默认 duration。</td></tr>
+      <tr><td><code>toast.dismiss(id?)</code></td><td>function</td><td>省略 id 则清空所有；指定 id 则只清那条。</td></tr>
+      <tr><td><code>toast.promise(p, msgs)</code></td><td>function</td><td>loading → success/error 三段联动，返回 <code>{ id, promise }</code>。</td></tr>
+      <tr><td><code>toast.list()</code></td><td>function</td><td>当前快照（只读）。</td></tr>
+      <tr><td><code>toast.store()</code></td><td>function</td><td>拿到 <code>ToastStore</code> 实例，可订阅。</td></tr>
+      <tr><td><code>ToastStore</code></td><td>class</td><td>可独立实例化（用于多 store 场景、测试）。</td></tr>
+      <tr><td><code>toastApi</code></td><td>const</td><td>同 <code>toast</code>，但与 <code>__resetDefaultToastStore()</code> 保持同步。</td></tr>
+      <tr><td><code>TOAST_DURATION</code></td><td>const</td><td><code>SHORT=2s / DEFAULT=4s / LONG=6s / EXTENDED=10s / PERSISTENT=∞</code></td></tr>
+      <tr><td><code>emitTuiToast(type, msg, opts?)</code></td><td>function</td><td>TUI 适配入口，使用模块级 <code>toastStore</code>；传同一 <code>id</code> 可把 loading 原地替换为 success/error/warning。</td></tr>
+      <tr><td><code>emitTuiErrorToast(msg, error, id?)</code></td><td>function</td><td>把未知错误格式化到 <code>description</code>，默认使用 error 类型 LONG duration。</td></tr>
+      <tr><td><code>buildToasterOverlay(store, opts?)</code></td><td>function</td><td>渲染层入口，返回可挂到 <code>renderer.root</code> 的 OpenTUI Box。</td></tr>
+    </tbody>
+  </table>
+
+  <h3>2.3 用法示例</h3>
+  <pre class="code"><span class="com">// 简单通知</span>
+toast.success(<span class="str">`Created sibling ${id}`</span>);
+toast.error(<span class="str">"Merge conflict"</span>, { description: <span class="str">"3 files differ"</span> });
+
+<span class="com">// 异步联动</span>
+<span class="kw">const</span> handle = toast.promise(<span class="fn">jobs.mergeLeaves</span>(state, ids), {
+  loading: <span class="str">"merging..."</span>,
+  success: (m) => <span class="str">`Merge node ${m.id}`</span>,
+  error: (e) => e <span class="kw">instanceof</span> Error ? e.message : <span class="str">"merge failed"</span>,
+});
+
+<span class="com">// 手动 dismiss</span>
+toast.dismiss(handle.id);
+
+<span class="com">// 多 store 场景（测试、隔离面板）</span>
+<span class="kw">const</span> custom = <span class="kw">new</span> <span class="fn">ToastStore</span>();
+custom.add(<span class="str">"hello"</span>);
+custom.dismiss();</pre>
+
+  <!-- ─────────── 3. 实现细节 ─────────── -->
+  <h2>3. 实现文件</h2>
+  <table>
+    <thead>
+      <tr><th>文件</th><th class="num">行数</th><th>职责</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>src/core/toast.ts</code></td><td class="num">339</td><td>纯逻辑核心：<code>ToastStore</code>、<code>toastPromise</code>、<code>toastApi</code>、<code>TOAST_DURATION</code>。</td></tr>
+      <tr><td><code>src/tui/toast-actions.ts</code></td><td class="num">45</td><td>TUI 适配层：模块级 <code>toastStore</code>、<code>emitTuiToast</code>、<code>emitTuiErrorToast</code>、错误格式化与 merge 描述。</td></tr>
+      <tr><td><code>src/tui/toast-overlay.ts</code></td><td class="num">155</td><td>渲染层：<code>buildToasterOverlay()</code>，订阅 store 渲染到 OpenTUI 树。</td></tr>
+      <tr><td><code>src/tui.ts</code></td><td class="num">+80</td><td>按报告 5.x 场景发出 toast；<code>renderApp</code> 中挂载 toaster 浮层。</td></tr>
+      <tr><td><code>tests/toast.test.ts</code></td><td class="num">535</td><td>44 个单元测试，覆盖 add/update/dismiss/tick/types/duration/promise/listeners/snapshot/edge cases。</td></tr>
+      <tr><td><code>tests/tui-toast.test.ts</code></td><td class="num">61</td><td>3 个单元测试，覆盖 TUI loading 原地替换、error description、各类型默认 duration。</td></tr>
+    </tbody>
+  </table>
+
+  <h3>3.1 ToastStore API（核心）</h3>
+  <pre class="code"><span class="kw">class</span> <span class="fn">ToastStore</span> {
+  <span class="fn">add</span>(message: <span class="kw">string</span>, options?: { type?, id?, description?, duration?, action? }): <span class="kw">string</span>;
+  <span class="fn">update</span>(id: <span class="kw">string</span>, patch: { type?, message?, description?, action?, duration? }): <span class="kw">boolean</span>;
+  <span class="fn">dismiss</span>(id?: <span class="kw">string</span>): <span class="kw">string</span>[];            <span class="com">// 省略 id = 全部清空</span>
+  <span class="fn">tick</span>(): <span class="kw">string</span>[];                              <span class="com">// 推进时间，淘汰已过期</span>
+  <span class="fn">list</span>(): <span class="kw">readonly</span> <span class="fn">ToastEntry</span>[];                 <span class="com">// 快照</span>
+  <span class="fn">size</span>(): <span class="kw">number</span>;
+  <span class="fn">onDismiss</span>(listener: (id: <span class="kw">string</span>) =&gt; <span class="kw">void</span>): () =&gt; <span class="kw">void</span>;
+  <span class="fn">onChange</span>(listener: () =&gt; <span class="kw">void</span>): () =&gt; <span class="kw">void</span>;
+}</pre>
+
+  <h3>3.2 默认 duration 策略</h3>
+  <table>
+    <thead><tr><th>type</th><th>默认 duration</th><th>理由</th></tr></thead>
+    <tbody>
+      <tr><td><code>default</code></td><td><code>DEFAULT</code> (4s)</td><td>中性</td></tr>
+      <tr><td><code>success</code></td><td><code>DEFAULT</code> (4s)</td><td>成功消息一般可短读</td></tr>
+      <tr><td><code>error</code></td><td><code>LONG</code> (6s)</td><td>错误需更多阅读时间</td></tr>
+      <tr><td><code>warning</code> / <code>info</code></td><td><code>DEFAULT</code> (4s)</td><td>中性</td></tr>
+      <tr><td><code>loading</code></td><td><code>PERSISTENT</code> (∞)</td><td>由 <code>toast.promise</code> 主动 promote 或 <code>toast.dismiss</code> 手动关闭</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ─────────── 4. 测试 ─────────── -->
+  <h2>4. 测试覆盖</h2>
+
+  <h3>4.1 覆盖率基线（上一轮 <code>npm run test:coverage</code>）</h3>
+  <p class="muted">以下覆盖率是 toast 库初始实现时的基线。本次场景适配实际复跑了 typecheck、测试编译、47 个 toast 相关单测和 3 个非 Codex TUI smoke；完整覆盖率仍建议作为 release gate 复跑。</p>
+  <table>
+    <thead>
+      <tr><th>文件</th><th class="num">line %</th><th class="num">branch %</th><th class="num">funcs %</th><th>未覆盖</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>core/toast.js</code></td><td class="num"><span class="ok">98.21%</span></td><td class="num">96.67%</td><td class="num">94.29%</td><td>78-79 (Date.now.toString(36)), 201-202 (onChange Set add/delete)</td></tr>
+      <tr><td><code>core/log.js</code></td><td class="num">100%</td><td class="num">100%</td><td class="num">100%</td><td>—</td></tr>
+      <tr><td><code>core/storage.js</code></td><td class="num">100%</td><td class="num">100%</td><td class="num">100%</td><td>—</td></tr>
+      <tr><td><code>core/types.js</code></td><td class="num">100%</td><td class="num">100%</td><td class="num">100%</td><td>—</td></tr>
+      <tr><td><code>core/claude.js</code></td><td class="num">100%</td><td class="num">85.48%</td><td class="num">100%</td><td>—</td></tr>
+      <tr><td><code>core/config.js</code></td><td class="num">99.23%</td><td class="num">96.50%</td><td class="num">96.30%</td><td>327-329</td></tr>
+      <tr><td><code>core/git.js</code></td><td class="num">98.95%</td><td class="num">83.10%</td><td class="num">96.77%</td><td>124-125</td></tr>
+      <tr><td><code>core/shell.js</code></td><td class="num">100%</td><td class="num">70.00%</td><td class="num">100%</td><td>—</td></tr>
+      <tr><td><b>all files (project)</b></td><td class="num"><b><span class="ok">96.00%</span></b></td><td class="num">83.79%</td><td class="num">93.87%</td><td>— (≥ 95% 阈值 ✓)</td></tr>
+    </tbody>
+  </table>
+
+  <h3>4.2 测试分组（47 项）</h3>
+  <div class="grid cols-2">
+    <div class="card">
+      <h4>构造与基础 (4)</h4>
+      <ul>
+        <li><code>TOAST_DURATION exposes the documented presets</code></li>
+        <li><code>new store is empty and reports size 0</code></li>
+        <li><code>add defaults to using Date.now when no clock is provided</code></li>
+        <li><code>store accepts a custom clock and tick advances against it</code></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>add / insert (8)</h4>
+      <ul>
+        <li><code>add returns a stable id and stores message with default duration</code></li>
+        <li><code>add with explicit type picks the right default duration</code></li>
+        <li><code>add with custom duration overrides the default</code></li>
+        <li><code>add with PERSISTENT duration sets expiresAt to null</code></li>
+        <li><code>add stores description and action verbatim</code></li>
+        <li><code>add with same id replaces the existing toast in place</code></li>
+        <li><code>add preserves insertion order</code></li>
+        <li><code>sequential loading -&gt; success on the same id replaces the toast</code></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>update (6)</h4>
+      <ul>
+        <li><code>update on a missing id returns false and emits no change</code></li>
+        <li><code>update can change message, type, description and duration</code></li>
+        <li><code>update with action: null clears the action</code></li>
+        <li><code>update with PERSISTENT duration sets expiresAt to null</code></li>
+        <li><code>update keeps createdAt stable</code></li>
+        <li><code>update with message: undefined is a no-op for the message</code></li>
+        <li><code>add with description and action survives an update that only changes message</code></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>dismiss (4)</h4>
+      <ul>
+        <li><code>dismiss by id removes that single entry and fires the listener</code></li>
+        <li><code>dismiss with no id clears every entry and fires for each</code></li>
+        <li><code>dismiss on an empty store is a no-op</code></li>
+        <li><code>dismiss on an unknown id returns [] and fires no listener</code></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>tick (5)</h4>
+      <ul>
+        <li><code>tick on an empty store is a no-op</code></li>
+        <li><code>tick dismisses only the expired entries</code></li>
+        <li><code>tick fires dismiss listeners for expired toasts</code></li>
+        <li><code>tick that expires nothing fires no listeners</code></li>
+        <li><code>tick at exactly the expiry boundary dismisses the toast</code></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>listeners (4)</h4>
+      <ul>
+        <li><code>onDismiss listener can be unsubscribed</code></li>
+        <li><code>onChange fires on add, update, dismiss and tick-expiry but not on empty tick</code></li>
+        <li><code>onChange listener can be unsubscribed</code></li>
+        <li><code>add defaults to using Date.now when no clock is provided</code></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>toastPromise (4)</h4>
+      <ul>
+        <li><code>toastPromise promotes loading -&gt; success on resolve</code></li>
+        <li><code>toastPromise promotes loading -&gt; error on reject and rethrows</code></li>
+        <li><code>toastPromise supports description templates and string messages</code></li>
+        <li><code>toastPromise allows success to be a function and error to be a function</code></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>toastApi / 工厂 (7)</h4>
+      <ul>
+        <li><code>createToastApiFor returns shortcuts that share the store</code></li>
+        <li><code>createToastApiFor default toast uses type:default</code></li>
+        <li><code>createToastApiFor.dismiss delegates to the store</code></li>
+        <li><code>toastApi shares a process-wide default store</code></li>
+        <li><code>__resetDefaultToastStore clears the singleton between tests</code></li>
+        <li><code>end-to-end: loading -&gt; success on resolve</code></li>
+        <li><code>toastStore list() returns a snapshot that does not mutate with later operations</code></li>
+        <li><code>list returns readonly array — mutations do not affect the store</code></li>
+        <li><code>ToastEntry shape includes all required fields</code></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>TUI toast adapter (3)</h4>
+      <ul>
+        <li><code>TUI toast helper promotes a loading toast in place</code></li>
+        <li><code>TUI error toast helper stores error detail as a long-lived description</code></li>
+        <li><code>TUI toast helper supports success, warning, info and loading defaults</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>4.3 覆盖率阈值检查</h3>
+  <p><code>package.json</code> 的 <code>test:coverage</code> 脚本使用 <code>--test-coverage-lines=95</code>。上一轮整体行覆盖 <b>96.00%</b>，<b>高于阈值</b>。本次新增的 <code>tests/tui-toast.test.ts</code> 专门覆盖 TUI 适配层，避免直接导入 OpenTUI 渲染入口导致 Node FFI 依赖进入纯单测。</p>
+
+  <h3>4.4 TUI 真实冒烟</h3>
+  <p>本次复跑了 3 个不依赖真实 Codex/Claude 会话的 OpenTUI PTY smoke：<code>TUI delete key removes...</code>、<code>TUI shows blocked state...</code>、<code>TUI persists graph focus...</code>，结果 <b>3/3 通过</b>。完整 <code>npm test</code> 仍是发布前门槛，会覆盖真实 Codex/Claude CLI 路径。</p>
+
+  <!-- ─────────── 5. 场景识别 ─────────── -->
+  <h2>5. 项目中需要 toast 的场景（已适配）</h2>
+  <p>通过 grep <code>ui.message = </code> 在 <code>src/tui.ts</code> 中定位到 <b>16 个赋值点</b>，本次已按语义全部适配 toast。原则是：<code>ui.message</code> 继续作为侧边面板持久状态；toast 作为临时反馈并与其并存。进度类使用同一 toast id 从 <code>loading</code> 原地替换为最终状态。</p>
+
+  <h3>5.1 错误反馈（4 个，建议 <code>toast.error</code>）</h3>
+
+  <div class="scenario error">
+    <div class="head">
+      <span class="pill error">error</span>
+      <span class="file">src/tui.ts:219</span>
+    </div>
+    <div class="old">ui.message = error instanceof Error ? error.message : String(error);</div>
+    <div class="arrow">→</div>
+    <div class="new">toast.error("Action failed", { description: String(error) });</div>
+  </div>
+  <p class="muted">上下文：<code>runAction()</code> 的 try/catch catch 分支（删除/创建/切换/sibling 操作的统一异常）。</p>
+
+  <div class="scenario error">
+    <div class="head">
+      <span class="pill error">error</span>
+      <span class="file">src/tui.ts:298</span>
+    </div>
+    <div class="old">ui.message = node.blockedReason || node.error || `Node is not editable: ${node.status}`;</div>
+    <div class="arrow">→</div>
+    <div class="new">toast.error("Node blocked", { description: reason });</div>
+  </div>
+  <p class="muted">上下文：用户按 Enter 进入不可编辑的 leaf 时（<code>LeafRunning</code> / <code>ParentCommitFailed</code> 等）。</p>
+
+  <div class="scenario error">
+    <div class="head">
+      <span class="pill error">error</span>
+      <span class="file">src/tui.ts:429</span>
+    </div>
+    <div class="old">ui.message = error instanceof Error ? error.message : String(error);</div>
+    <div class="arrow">→</div>
+    <div class="new">toast.error("Merge failed", { description: String(error) });</div>
+  </div>
+  <p class="muted">上下文：<code>m</code> 键 merge 操作的 catch 分支。</p>
+
+  <div class="scenario error">
+    <div class="head">
+      <span class="pill error">error</span>
+      <span class="file">src/tui.ts:519, 585</span>
+    </div>
+    <div class="old">ui.message = error instanceof Error ? error.message : String(error);<br>ui.message = node.error ?? "Failed to enter Claude";</div>
+    <div class="arrow">→</div>
+    <div class="new">toast.error("Cannot open Claude", { description: ... });</div>
+  </div>
+  <p class="muted">上下文：<code>enterLeafInTerminalTab</code> / <code>enterLeafInCurrentTab</code> 失败时。属于关键路径，建议同时保留 <code>ui.message</code> 作为侧边面板持久状态。</p>
+
+  <h3>5.2 成功反馈（6 个，建议 <code>toast.success</code>）</h3>
+
+  <div class="scenario success">
+    <div class="head">
+      <span class="pill success">success</span>
+      <span class="file">src/tui.ts:339, 348</span>
+    </div>
+    <div class="old">ui.message = `Created sibling ${sibling.id}`;</div>
+    <div class="arrow">→</div>
+    <div class="new">toast.success(`Created sibling ${sibling.id}`);</div>
+  </div>
+  <p class="muted">上下文：<code>shift+tab</code> 分支创建 sibling 的 confirm 和 cancel 默认分支。</p>
+
+  <div class="scenario success">
+    <div class="head">
+      <span class="pill success">success</span>
+      <span class="file">src/tui.ts:364</span>
+    </div>
+    <div class="old">ui.message = child.status === "AwaitingParentCommit" ? `Created ${child.id}; parent commit running` : `Created ${child.id}`;</div>
+    <div class="arrow">→</div>
+    <div class="new">toast.success(`Created ${child.id}`, { description: child.status === "AwaitingParentCommit" ? "parent commit running" : undefined });</div>
+  </div>
+  <p class="muted">上下文：<code>tab</code> 键创建 next node。</p>
+
+  <div class="scenario success">
+    <div class="head">
+      <span class="pill success">success</span>
+      <span class="file">src/tui.ts:377</span>
+    </div>
+    <div class="old">ui.message = `Deleted leaf; reset to ${focus.id}`;</div>
+    <div class="arrow">→</div>
+    <div class="new">toast.success(`Deleted leaf`, { description: `reset to ${focus.id}` });</div>
+  </div>
+  <p class="muted">上下文：<code>d</code> 键删除 leaf。</p>
+
+  <div class="scenario success">
+    <div class="head">
+      <span class="pill success">success</span>
+      <span class="file">src/tui.ts:399</span>
+    </div>
+    <div class="old">ui.message = `Current worktree: ${worktree.path}`;</div>
+    <div class="arrow">→</div>
+    <div class="new">toast.success("Switched worktree", { description: worktree.path });</div>
+  </div>
+  <p class="muted">上下文：<code>s</code> 键切换 worktree。</p>
+
+  <div class="scenario success">
+    <div class="head">
+      <span class="pill success">success</span>
+      <span class="file">src/tui.ts:427</span>
+    </div>
+    <div class="old">ui.message = `Merge node ${merge.id}`;</div>
+    <div class="arrow">→</div>
+    <div class="new">toast.success(`Merge node ${merge.id}`);</div>
+  </div>
+  <p class="muted">上下文：<code>m</code> 键 merge 成功。</p>
+
+  <div class="scenario success">
+    <div class="head">
+      <span class="pill success">success</span>
+      <span class="file">src/tui.ts:509</span>
+    </div>
+    <div class="old">ui.message = `Opened ${node.id} in ${terminalName} ${target}`;</div>
+    <div class="arrow">→</div>
+    <div class="new">toast.success(`Opened ${node.id}`, { description: `${terminalName} ${target}` });</div>
+  </div>
+  <p class="muted">上下文：<code>enterLeafInTerminalTab</code> 成功（多 tab 模式）。</p>
+
+  <div class="scenario success">
+    <div class="head">
+      <span class="pill success">success</span>
+      <span class="file">src/tui.ts:572</span>
+    </div>
+    <div class="old">ui.message = "Claude session ended";</div>
+    <div class="arrow">→</div>
+    <div class="new">toast.success("Claude session ended");</div>
+  </div>
+  <p class="muted">上下文：<code>enterLeafInCurrentTab</code> 成功（单 tab 模式，attach/resume 退出后）。</p>
+
+  <h3>5.3 任务进度（2 个，建议 <code>toast.loading</code> + <code>toast.promise</code>）</h3>
+
+  <div class="scenario loading">
+    <div class="head">
+      <span class="pill loading">loading</span>
+      <span class="file">src/tui.ts:212</span>
+    </div>
+    <div class="old">ui.message = label;</div>
+    <div class="arrow">→</div>
+    <div class="new">const handle = toast.loading(label); /* 后续 promote 为 success/error */</div>
+  </div>
+  <p class="muted">上下文：<code>runAction()</code> 的开始（label 是 "opening node tab..." / "creating sibling..." / "creating next node..." / "deleting leaf... resetting worktree..." / "Switching worktree"）。</p>
+
+  <div class="scenario loading">
+    <div class="head">
+      <span class="pill loading">loading</span>
+      <span class="file">src/tui.ts:408</span>
+    </div>
+    <div class="old">ui.message = "merging...";</div>
+    <div class="arrow">→</div>
+    <div class="new">toast.promise(jobs.mergeLeaves(...), { loading: "merging...", success: (m) => `Merge node ${m.id}`, error: (e) => e.message });</div>
+  </div>
+  <p class="muted">上下文：<code>m</code> 键 merge 启动。</p>
+
+  <h3>5.4 信息提示（2 个，可选 <code>toast.info</code>）</h3>
+
+  <div class="scenario info">
+    <div class="head">
+      <span class="pill info">info</span>
+      <span class="file">src/tui.ts:680</span>
+    </div>
+    <div class="old">ui.message = ui.message || `Focus moved to ${fallback.id}`;</div>
+    <div class="arrow">→</div>
+    <div class="new">toast.info(`Focus moved to ${fallback.id}`);  // 仅当 ui.message 为空时</div>
+  </div>
+  <p class="muted">上下文：焦点节点被外部修改后自动 fallback。这是低优先级，可选迁移。</p>
+
+  <div class="scenario info">
+    <div class="head">
+      <span class="pill info">info</span>
+      <span class="file">src/tui.ts:408 (loading 文本)</span>
+    </div>
+    <p class="muted">loading 文本的 "merging..." 在右上角浮层里会变成"持续动画 + 文字"，原本在侧面板的简短提示可保留为 status 字段，浮层只承担进度反馈。</p>
+  </div>
+
+  <h3>5.5 保持内联（不建议迁移）</h3>
+  <ul>
+    <li><b>侧边面板的 <code>ui.message</code> 字段</b>（<code>sidePanel</code> 渲染 <code>Text({ content: ui.message || "Ready", ... })</code>）：这是<b>持久状态</b>，不是临时通知。toast 浮层是<b>临时通知</b>，两者职责不同，建议并存而不是替换。</li>
+  </ul>
+
+  <h3>5.6 汇总</h3>
+  <table>
+    <thead><tr><th>类型</th><th class="num">场景数</th><th>建议</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill error">error</span></td><td class="num">6</td><td>✅ 已通过 <code>emitTuiErrorToast</code> / <code>emitTuiToast("error")</code> 适配，错误详情进入 <code>description</code></td></tr>
+      <tr><td><span class="pill success">success</span></td><td class="num">7</td><td>✅ 已通过 <code>emitTuiToast("success")</code> 适配，创建/删除/切换/打开会话均有反馈</td></tr>
+      <tr><td><span class="pill loading">loading</span></td><td class="num">2</td><td>✅ 已通过同一 id 的 loading → success/error/warning 原地替换适配，避免持久 loading 残留</td></tr>
+      <tr><td><span class="pill info">info</span></td><td class="num">1</td><td>✅ 焦点 fallback 仅在原本 <code>ui.message</code> 为空时发 <code>info</code></td></tr>
+      <tr><td><span class="pill default">保留 ui.message</span></td><td class="num">1+</td><td>侧边面板的持久状态字段，与 toast 浮层并存</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ─────────── 6. 迁移 ─────────── -->
+  <h2>6. 迁移策略</h2>
+
+  <h3>6.1 最小入侵</h3>
+  <p>当前实现已经把 <code>toastStore</code> 单例和 <code>buildToasterOverlay</code> 集成到 <code>renderApp</code>，并完成 16 个赋值点的适配。改动没有替换 <code>ui.message</code>，只是在对应事件旁边补 toast；<code>runAction</code> 统一生成 loading toast，并由动作返回值或 catch 分支更新为最终状态。</p>
+
+  <h3>6.2 本次落地范围</h3>
+  <ol>
+    <li><b>错误路径</b>：<code>runAction</code> catch、不可编辑节点、merge 失败、打开 Codex/Claude 失败均发 error toast。</li>
+    <li><b>成功路径</b>：创建 sibling/next、删除 leaf、切换 worktree、merge 成功、打开终端 tab、当前 tab 会话结束均发 success toast。</li>
+    <li><b>任务进度</b>：<code>runAction</code> 和 merge 启动时发 loading toast；成功、失败或 conflict 时使用同一 id 更新。</li>
+    <li><b>信息提示</b>：焦点 fallback 在 <code>ui.message</code> 为空时发 info toast。</li>
+    <li><b>测试与文档</b>：新增 <code>tests/tui-toast.test.ts</code>；同步更新本报告与 <code>AGENTS.md</code>。</li>
+  </ol>
+
+  <h3>6.3 不变量与回归</h3>
+  <ul>
+    <li><b>侧边面板 <code>ui.message</code> 必须保留</b>，因为它是 Ready/任务当前状态的可见指示器，不能改成"已消失的弹窗"。</li>
+    <li><b><code>ui.task</code> 字段</b>：当前在 <code>toolbar()</code> 顶部条显示 "task: ..." 文字，迁移到 <code>toast.loading</code> 后是否要保留 <code>ui.task</code>？建议保留，作为 toolbar 的非弹层指示器（用户在多节点看图时浮层可能被遮挡）。</li>
+    <li><b>测试要求</b>：本次已通过 typecheck、测试编译、47 个 toast 相关单测、3 个非 Codex TUI smoke；发布前仍需跑完整 <code>npm test</code> 与 <code>npm run test:coverage</code>。</li>
+  </ul>
+
+  <!-- ─────────── 7. 验证 ─────────── -->
+  <h2>7. 验证</h2>
+
+  <h3>7.1 复现命令</h3>
+  <pre class="code">npm run typecheck                     <span class="com"># tsc --noEmit, 0 error</span>
+npm run build:test                    <span class="com"># dist-test 编译通过</span>
+node --test --test-concurrency=1 dist-test/tests/toast.test.js dist-test/tests/tui-toast.test.js
+                                      <span class="com"># 47/47 pass</span>
+node --test --test-concurrency=1 --test-name-pattern "TUI delete|TUI shows blocked|TUI persists" dist-test/tests/tui-smoke.test.js
+                                      <span class="com"># 3/3 pass（非 Codex TUI PTY smoke）</span></pre>
+
+  <h3>7.2 验收点</h3>
+  <ul>
+    <li>✅ <b>toast 库实现</b>：<code>src/core/toast.ts</code>（339 行）+ <code>src/tui/toast-overlay.ts</code>（155 行）</li>
+    <li>✅ <b>右上角位置</b>：<code>buildToasterOverlay</code> 用 <code>position:"absolute", top:1, right:1, zIndex:100</code></li>
+    <li>✅ <b>TUI 场景适配</b>：报告 5.x 节列出的 16 个 <code>ui.message</code> 赋值点已补 toast，且保留侧边持久状态</li>
+    <li>✅ <b>测试完善</b>：47 个 toast 相关单测覆盖核心 API 与 TUI adapter；3 个非 Codex TUI smoke 通过</li>
+    <li>✅ <b>覆盖率基线</b>：上一轮项目整体 96.00%；toast.js 自身 98.21%；本次发布前仍建议复跑 coverage</li>
+    <li>✅ <b>场景识别</b>：本报告 5.x 节已从迁移计划更新为已适配状态</li>
+    <li>✅ <b>无新依赖</b>：完全用现有 <code>@opentui/core@^0.2.14</code></li>
+    <li>✅ <b>无 fake 渲染</b>：toast 浮层走真实 OpenTUI 渲染，<code>tui-smoke.test.ts</code> 验证不破坏 TUI 交互</li>
+    <li>✅ <b>AGENTS.md / CLAUDE.md 同步</b>：架构树与 Toast 段落已添加/更新</li>
+  </ul>
+
+  <footer>
+    Generated 2026-06-02 · CCFlow Toast Implementation · <a style="color: var(--accent); text-decoration: none;" href="../src/core/toast.ts">src/core/toast.ts</a> · <a style="color: var(--accent); text-decoration: none;" href="../src/tui/toast-actions.ts">src/tui/toast-actions.ts</a> · <a style="color: var(--accent); text-decoration: none;" href="../src/tui/toast-overlay.ts">src/tui/toast-overlay.ts</a> · <a style="color: var(--accent); text-decoration: none;" href="../tests/toast.test.ts">tests/toast.test.ts</a> · <a style="color: var(--accent); text-decoration: none;" href="../tests/tui-toast.test.ts">tests/tui-toast.test.ts</a>
+  </footer>
+
+</div>
+</body>
+</html>
