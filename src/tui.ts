@@ -54,6 +54,41 @@ type UiMode = "graph" | "detail";
 
 const SIDE_PANEL_WIDTH = 30;
 
+// Glass / minimal palette
+const COLOR_OUTER_BG = "#08090c";
+const COLOR_PANEL_BG = "#0d1117";
+const COLOR_PRIMARY = "#e2e8f0";
+const COLOR_SECONDARY = "#94a3b8";
+const COLOR_TERTIARY = "#64748b";
+const COLOR_QUATERNARY = "#475569";
+const COLOR_DIM_RULE = "#1e293b";
+const COLOR_FOCUS_ACCENT = "#7dd3fc";
+const COLOR_FOCUS_INVERT_BG = "#e2e8f0";
+const COLOR_FOCUS_INVERT_FG = "#020617";
+const COLOR_STATUS_ERROR = "#fca5a5";
+const COLOR_STATUS_RUNNING = "#7dd3fc";
+const COLOR_STATUS_AWAITING = "#fcd34d";
+const COLOR_STATUS_SEALED = "#64748b";
+const COLOR_CURRENT_LEAF = "#86efac";
+const COLOR_OTHER_LEAF = "#fde68a";
+const COLOR_SELECTED_BAR = "#fde68a";
+
+const ERROR_STATUSES = new Set([
+  "CommitFailed",
+  "MergeConflict",
+  "JobFailed",
+  "ParentCommitFailed",
+]);
+
+const RUNNING_STATUSES = new Set([
+  "LeafRunning",
+  "Committing",
+  "ParentCommitting",
+  "MergeRunning",
+  "Deleting",
+  "AwaitingParentCommit",
+]);
+
 interface InputMode {
   prompt: string;
   onConfirm: (value: string) => void;
@@ -75,6 +110,13 @@ interface UiState {
 interface TuiExit {
   kind: "quit" | "enter";
   nodeId?: string;
+}
+
+interface NodeAccent {
+  bar: string;
+  bg: string;
+  fg: string;
+  dim: string;
 }
 
 export async function runCcflowTui(state: CcflowState, options: { config?: CcflowConfig } = {}): Promise<void> {
@@ -164,7 +206,7 @@ async function runGraphOnce(
       useKittyKeyboard: false as never,
       useMouse: false,
       enableMouseMovement: false,
-      backgroundColor: "#070b10",
+      backgroundColor: COLOR_OUTER_BG,
     });
     logEvent(state.repoRoot, "tui:renderer:create-done", {
       width: renderer.terminalWidth || renderer.width || null,
@@ -642,7 +684,6 @@ async function enterLeafInCurrentTab(
     logEvent(state.repoRoot, "tui:enter:error", {
       nodeId: node.id,
       error: node.error,
-      focusId: ui.focusId,
       target: "current-tab",
     });
   }
@@ -694,7 +735,7 @@ function renderApp(renderer: CliRenderer, state: CcflowState, ui: UiState, confi
         width: "100%",
         height: "100%",
         flexDirection: "column",
-        backgroundColor: "#070b10",
+        backgroundColor: COLOR_OUTER_BG,
       },
       Box(
         {
@@ -704,7 +745,7 @@ function renderApp(renderer: CliRenderer, state: CcflowState, ui: UiState, confi
           paddingRight: 1,
           paddingTop: 1,
           gap: 0,
-          backgroundColor: "#020617",
+          backgroundColor: COLOR_OUTER_BG,
         },
         ui.mode === "detail" ? detailPanel(state, focusNode, graphWidth, panelHeight, config) : graphPanel(state, ui, focusNode, graphWidth, panelHeight),
         compact ? compactSummary(state, focusNode, ui) : sidePanel(state, focusNode, ui, panelHeight),
@@ -752,32 +793,72 @@ function graphPanel(state: CcflowState, ui: UiState, focusNode: CcflowNode, widt
   ui.graphViewport = ensureNodeVisible(ui.graphViewport, positions, focusNode.id, canvasWidth, canvasHeight);
   const edgeLayer = buildEdgeLayer(state, positions, canvasWidth, canvasHeight, ui.graphViewport);
   const visiblePositions = projectVisiblePositions(positions, ui.graphViewport, canvasWidth, canvasHeight);
+  const basename = basenameOfRepoPath(state.repoRoot);
+  const titleWidth = Math.max(10, width - 2);
+  const titleLeft = `▄ CCFLOW · `;
+  const titleMid = basename;
+  const titleRight = "  ";
+  const consumed = titleLeft.length + titleMid.length + titleRight.length;
+  const filler = "─".repeat(Math.max(0, titleWidth - consumed));
+  const titleLeftX = 1;
+  const titleMidX = titleLeftX + titleLeft.length;
+  const titleRightX = titleMidX + titleMid.length;
+  const fillerX = titleRightX + titleRight.length;
 
   return Box(
     {
       width,
       height,
-      border: true,
-      borderStyle: "rounded",
-      borderColor: "#334155",
-      title: ` ${truncate(state.repoRoot, Math.max(10, width - 4))} `,
-      backgroundColor: "#020617",
+      backgroundColor: COLOR_OUTER_BG,
       position: "relative",
       overflow: "hidden",
     },
     Text({
       content: edgeLayer,
-      fg: "#334155",
+      fg: "#1e293b",
       position: "absolute",
       left: 1,
       top: 1,
       width: canvasWidth,
       height: canvasHeight,
     }),
+    Text({
+      content: titleLeft,
+      fg: COLOR_FOCUS_ACCENT,
+      position: "absolute",
+      top: 0,
+      left: titleLeftX,
+    }),
+    Text({
+      content: titleMid,
+      fg: COLOR_SECONDARY,
+      position: "absolute",
+      top: 0,
+      left: titleMidX,
+    }),
+    Text({
+      content: titleRight,
+      fg: COLOR_SECONDARY,
+      position: "absolute",
+      top: 0,
+      left: titleRightX,
+    }),
+    Text({
+      content: filler,
+      fg: COLOR_DIM_RULE,
+      position: "absolute",
+      top: 0,
+      left: fillerX,
+    }),
     ...visiblePositions.map((pos) =>
       nodeCard(state, pos.node, pos.x + 1, pos.y + 1, pos.width, ui.focusId === pos.node.id, ui.selectedIds.has(pos.node.id)),
     ),
   );
+}
+
+function basenameOfRepoPath(repoRoot: string): string {
+  const parts = repoRoot.split(/[\\/]/);
+  return parts[parts.length - 1] || repoRoot;
 }
 
 function nodeCard(
@@ -790,12 +871,23 @@ function nodeCard(
   selected: boolean,
 ) {
   const accent = nodeAccent(state, node);
-  const borderColor = focused ? "#7dd3fc" : selected ? "#facc15" : accent;
-  const backgroundColor = focused ? "#7dd3fc" : selected ? "#3f3205" : "#0b1120";
-  const fg = focused ? "#020617" : "#e5e7eb";
   const worktree = getWorktree(state, node.git.worktreeId);
   const indicator = nodeIndicator(state, node);
   const commit = node.git.commitHash ? node.git.commitHash.slice(0, 7) : "uncommitted";
+
+  const errored = ERROR_STATUSES.has(node.status);
+  const cardBg = focused ? COLOR_FOCUS_INVERT_BG : accent.bg;
+  const cardFg = focused ? COLOR_FOCUS_INVERT_FG : accent.fg;
+  const dimFg = focused ? "#0f172a" : accent.dim;
+  const barColor = focused
+    ? COLOR_FOCUS_INVERT_FG
+    : errored
+      ? COLOR_STATUS_ERROR
+      : selected
+        ? COLOR_SELECTED_BAR
+        : accent.bar;
+  const titleBold = focused || selected;
+  const innerWidth = Math.max(0, width - 2);
 
   return Box(
     {
@@ -804,21 +896,33 @@ function nodeCard(
       top,
       width,
       height: GRAPH_NODE_HEIGHT,
-      border: true,
-      borderStyle: "rounded",
-      borderColor,
-      backgroundColor,
+      backgroundColor: cardBg,
       paddingLeft: 1,
       paddingRight: 1,
       flexDirection: "column",
     },
     Text({
-      content: `${indicator} ${truncate(node.title, width - 6)}`,
-      fg,
-      attributes: focused ? TextAttributes.BOLD : TextAttributes.NONE,
+      content: "▌",
+      fg: barColor,
+      position: "absolute",
+      left: -1,
+      top: 0,
+      width: 1,
+      height: GRAPH_NODE_HEIGHT,
     }),
-    Text({ content: truncate(`${node.type} · ${node.status}`, width - 4), fg: focused ? "#0f172a" : accent }),
-    Text({ content: truncate(`commit ${commit}  wt ${worktree.branch}`, width - 4), fg: focused ? "#0f172a" : "#94a3b8" }),
+    Text({
+      content: `${indicator} ${truncate(node.title, Math.max(0, innerWidth - 2))}`,
+      fg: cardFg,
+      attributes: titleBold ? TextAttributes.BOLD : TextAttributes.NONE,
+    }),
+    Text({
+      content: truncate(`${node.type} · ${node.status}`, innerWidth),
+      fg: focused ? "#0f172a" : accent.bar,
+    }),
+    Text({
+      content: truncate(`commit ${commit}  wt ${worktree.branch}`, innerWidth),
+      fg: dimFg,
+    }),
   );
 }
 
@@ -826,43 +930,82 @@ function sidePanel(state: CcflowState, node: CcflowNode, ui: UiState, height: nu
   const worktree = getWorktree(state, node.git.worktreeId);
   const accent = nodeAccent(state, node);
   const commitMessageBody = node.git.commitHash ? messageBody(node.git.commitMessage?.trim() || node.title) : "";
-  const children = [
-    Text({ content: node.title, fg: accent, attributes: TextAttributes.BOLD }),
-    field("status", node.status, statusColor(node.status)),
-    field("branch", worktree.branch, accent),
-    field(
+  // `VChild` is defined in `@opentui/core` internals but not re-exported; we
+  // only ever push `Box`/`Text` results into these arrays, so `any[]` is safe.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const children: any[] = [
+    Text({ content: "▌", fg: accent.bar, position: "absolute", left: -1, top: 0, width: 1, height }),
+    Text({ content: node.title, fg: accent.bar, attributes: TextAttributes.BOLD }),
+    fieldStack("status", node.status, statusColor(node.status)),
+    fieldStack("branch", worktree.branch, accent.fg),
+    fieldStack(
       "worktree",
       worktree.locked ? `${worktree.status} locked` : worktree.status,
-      worktree.locked ? "#7dd3fc" : worktree.status === "current" ? "#22c55e" : "#facc15",
+      worktree.locked ? COLOR_FOCUS_ACCENT : worktree.status === "current" ? COLOR_CURRENT_LEAF : COLOR_OTHER_LEAF,
     ),
-    node.jobId ? field("job", node.jobId, "#7dd3fc") : null,
-    node.pendingParentJobId ? field("parent job", node.pendingParentJobId, "#7dd3fc") : null,
-    node.conflictFiles?.length ? field("conflicts", node.conflictFiles.join(", "), "#fb7185") : null,
-    node.blockedReason ? field("blocked", node.blockedReason, "#facc15") : null,
-    node.error ? field("error", node.error, "#fb7185") : null,
-    Text({ content: "stats", fg: "#64748b" }),
-    Text({
-      content: `${node.stats.filesChanged} files  +${node.stats.insertions}  -${node.stats.deletions}`,
-      fg: "#cbd5e1",
-    }),
-    commitMessageBody ? Text({ content: commitMessageBody, fg: "#94a3b8", wrapMode: "word" }) : null,
-    Text({ content: ui.message || "Ready", fg: ui.busy ? "#facc15" : "#64748b", wrapMode: "word" }),
-  ].filter((child) => child != null);
+  ];
+  if (node.jobId) children.push(fieldStack("job", node.jobId, COLOR_FOCUS_ACCENT));
+  if (node.pendingParentJobId) children.push(fieldStack("parent job", node.pendingParentJobId, COLOR_FOCUS_ACCENT));
+  if (node.conflictFiles?.length) children.push(fieldStack("conflicts", node.conflictFiles.join(", "), COLOR_STATUS_ERROR));
+  if (node.blockedReason) children.push(fieldStack("blocked", node.blockedReason, COLOR_STATUS_AWAITING));
+  if (node.error) children.push(fieldStack("error", node.error, COLOR_STATUS_ERROR));
+
+  children.push(statsBlock(node));
+  if (commitMessageBody) children.push(commitMessageBlock(commitMessageBody));
+  children.push(messageLine(ui));
+
   return Box(
     {
       width: SIDE_PANEL_WIDTH,
       height,
-      border: true,
-      borderStyle: "rounded",
-      borderColor: accent,
-      backgroundColor: "#020617",
-      paddingLeft: 1,
+      backgroundColor: COLOR_PANEL_BG,
+      paddingLeft: 2,
       paddingRight: 1,
+      paddingTop: 1,
       flexDirection: "column",
       gap: 1,
+      position: "relative",
     },
     ...children,
   );
+}
+
+function commitMessageBlock(body: string) {
+  return Box(
+    { flexDirection: "column" },
+    ...body
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) =>
+        Box(
+          { flexDirection: "row" },
+          Text({ content: "│ ", fg: COLOR_QUATERNARY }),
+          Text({ content: truncate(line, 24), fg: COLOR_SECONDARY }),
+        ),
+      ),
+  );
+}
+
+function statsBlock(node: CcflowNode) {
+  return Box(
+    { flexDirection: "column" },
+    Text({ content: "S T A T S", fg: COLOR_TERTIARY }),
+    Text({
+      content: `${node.stats.filesChanged} files  +${node.stats.insertions}  -${node.stats.deletions}`,
+      fg: "#cbd5e1",
+    }),
+  );
+}
+
+function messageLine(ui: UiState) {
+  const prefix = Text({ content: "▸ ", fg: COLOR_FOCUS_ACCENT });
+  const text = Text({
+    content: ui.message || "Ready",
+    fg: ui.busy ? COLOR_STATUS_AWAITING : COLOR_TERTIARY,
+    wrapMode: "word",
+  });
+  return Box({ flexDirection: "row" }, prefix, text);
 }
 
 function messageBody(message: string): string {
@@ -875,89 +1018,145 @@ function messageBody(message: string): string {
 
 function compactSummary(state: CcflowState, node: CcflowNode, ui: UiState) {
   const worktree = getWorktree(state, node.git.worktreeId);
+  const accent = nodeAccent(state, node);
   return Box(
     {
       position: "absolute",
       left: 2,
       bottom: 2,
-      width: "95%",
+      width: widthPercent(95),
       height: 4,
-      border: true,
-      borderStyle: "rounded",
-      borderColor: nodeAccent(state, node),
-      backgroundColor: "#0f172a",
+      backgroundColor: COLOR_PANEL_BG,
       paddingLeft: 1,
       paddingRight: 1,
       flexDirection: "column",
     },
-    Text({ content: `${node.title}  ${worktree.branch}`, fg: nodeAccent(state, node), attributes: TextAttributes.BOLD }),
-    Text({ content: ui.message || `${node.type} ${node.status}`, fg: "#94a3b8" }),
+    Text({ content: "▌", fg: accent.bar, position: "absolute", left: -1, top: 0, width: 1, height: 4 }),
+    Text({ content: `${node.title}  ${worktree.branch}`, fg: accent.bar, attributes: TextAttributes.BOLD }),
+    Text({ content: ui.message || `${node.type} ${node.status}`, fg: COLOR_SECONDARY }),
   );
+}
+
+function widthPercent(value: number): `${number}%` {
+  return `${value}%` as `${number}%`;
 }
 
 function detailPanel(state: CcflowState, node: CcflowNode, width: number, height: number, config?: CcflowConfig) {
   const worktree = getWorktree(state, node.git.worktreeId);
   const launchMode = isMultitabEnabled(config) ? "new tab" : "current tab";
-  const lines = [
-    `id: ${node.id}`,
-    `title: ${node.title}`,
-    `type: ${node.type}`,
-    `status: ${node.status}`,
-    `commit: ${node.git.commitHash ?? "none"}`,
-    `branch: ${node.git.branch}`,
-    `worktree: ${worktree.path}`,
-    `parents: ${node.parents.join(", ") || "none"}`,
-    `children: ${node.children.join(", ") || "none"}`,
-    `cc session: ${node.cc.sessionId ?? "none"}`,
-    `job: ${node.jobId ?? "none"}`,
-    `parent job: ${node.pendingParentJobId ?? "none"}`,
-    `blocked: ${node.blockedReason ?? "none"}`,
-    `conflicts: ${node.conflictFiles?.join(", ") || "none"}`,
-    `cc launch: ${launchMode}`,
-    `files changed: ${node.stats.filesChanged}`,
-    `insertions: ${node.stats.insertions}`,
-    `deletions: ${node.stats.deletions}`,
-    `symbols: ${node.stats.symbolsChanged.join(", ") || "none"}`,
-    node.error ? `error: ${node.error}` : "",
-  ].filter(Boolean);
+  const accent = nodeAccent(state, node);
+  const divider = "─".repeat(Math.max(0, width - 2));
+  const lines: Array<{ label: string; value: string; color: string }> = [
+    { label: "TITLE", value: node.title, color: accent.bar },
+    { label: "STATUS", value: node.status, color: statusColor(node.status) },
+    { label: "TYPE", value: node.type, color: "#cbd5e1" },
+    { label: "ID", value: node.id, color: COLOR_TERTIARY },
+    { label: "COMMIT", value: node.git.commitHash ?? "none", color: COLOR_TERTIARY },
+    { label: "BRANCH", value: node.git.branch, color: COLOR_TERTIARY },
+    { label: "WORKTREE", value: worktree.path, color: "#cbd5e1" },
+    { label: "PARENTS", value: node.parents.join(", ") || "none", color: "#cbd5e1" },
+    { label: "CHILDREN", value: node.children.join(", ") || "none", color: "#cbd5e1" },
+    { label: "CC SESSION", value: node.cc.sessionId ?? "none", color: "#cbd5e1" },
+    { label: "JOB", value: node.jobId ?? "none", color: "#cbd5e1" },
+    { label: "PARENT JOB", value: node.pendingParentJobId ?? "none", color: "#cbd5e1" },
+    { label: "BLOCKED", value: node.blockedReason ?? "none", color: "#cbd5e1" },
+    { label: "CONFLICTS", value: node.conflictFiles?.join(", ") || "none", color: "#cbd5e1" },
+    { label: "CC LAUNCH", value: launchMode, color: "#cbd5e1" },
+    { label: "FILES CHANGED", value: String(node.stats.filesChanged), color: "#cbd5e1" },
+    { label: "INSERTIONS", value: String(node.stats.insertions), color: "#cbd5e1" },
+    { label: "DELETIONS", value: String(node.stats.deletions), color: "#cbd5e1" },
+    { label: "SYMBOLS", value: node.stats.symbolsChanged.join(", ") || "none", color: "#cbd5e1" },
+  ];
+  if (node.error) lines.push({ label: "ERROR", value: node.error, color: COLOR_STATUS_ERROR });
+
+  const labelWidth = Math.max(...lines.map((line) => line.label.length)) + 2;
+  const maxValueWidth = Math.max(0, width - 4 - labelWidth);
 
   return Box(
     {
       width,
       height,
-      border: true,
-      borderStyle: "rounded",
-      borderColor: nodeAccent(state, node),
-      title: ` ${truncate(state.repoRoot, Math.max(10, width - 4))} `,
-      backgroundColor: "#020617",
+      backgroundColor: COLOR_PANEL_BG,
       paddingLeft: 2,
       paddingRight: 2,
       paddingTop: 1,
       flexDirection: "column",
+      gap: 0,
     },
-    ...lines.map((line, index) =>
-      Text({ content: truncate(line, width - 6), fg: index === 1 ? nodeAccent(state, node) : "#cbd5e1" }),
+    Text({ content: divider, fg: COLOR_DIM_RULE }),
+    ...lines.map((line) =>
+      Box(
+        { flexDirection: "row" },
+        Text({ content: line.label.padEnd(labelWidth), fg: COLOR_TERTIARY }),
+        Text({ content: truncate(line.value, maxValueWidth), fg: line.color, attributes: line.label === "TITLE" ? TextAttributes.BOLD : TextAttributes.NONE }),
+      ),
     ),
   );
 }
 
 function footer(ui: UiState, config?: CcflowConfig) {
-  const enterLabel = isMultitabEnabled(config) ? "enter tab/detail" : "enter claude/detail";
+  if (ui.inputMode) {
+    return Box(
+      {
+        height: 1,
+        alignItems: "center",
+        paddingLeft: 2,
+        backgroundColor: COLOR_OUTER_BG,
+      },
+      Text({ content: ui.inputMode.prompt, fg: COLOR_FOCUS_ACCENT }),
+      Text({ content: ui.inputValue, fg: COLOR_PRIMARY }),
+      Text({ content: "▌", fg: COLOR_FOCUS_ACCENT }),
+    );
+  }
+
+  if (ui.mode === "detail") {
+    return Box(
+      {
+        height: 1,
+        alignItems: "center",
+        paddingLeft: 2,
+        backgroundColor: COLOR_OUTER_BG,
+      },
+      Text({ content: "▸ esc graph   ▸ q quit", fg: COLOR_TERTIARY }),
+    );
+  }
+
+  const sections: Array<{ key: string; label: string }> = [
+    { key: "arrows", label: "arrows move" },
+    { key: "enter", label: "⏎ enter" },
+    { key: "tab", label: "⇥ next" },
+    { key: "shift-tab", label: "⇧⇥ sibling" },
+    { key: "space", label: "space select" },
+    { key: "m", label: "m merge" },
+    { key: "s", label: "s switch" },
+    { key: "d", label: "d delete" },
+    { key: "q", label: "q quit" },
+  ];
+  // Highlight the contextual "current" mode hint: enter is the primary action
+  // the user is most likely to take when a node is focused.
+  const currentKey = "enter";
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fragments: any[] = [];
+  sections.forEach((section, index) => {
+    if (index > 0) {
+      fragments.push(Text({ content: "  ▸  ", fg: COLOR_TERTIARY }));
+    }
+    fragments.push(
+      Text({
+        content: section.label,
+        fg: section.key === currentKey ? COLOR_FOCUS_ACCENT : COLOR_TERTIARY,
+      }),
+    );
+  });
+
   return Box(
     {
-      height: 2,
+      height: 1,
       alignItems: "center",
       paddingLeft: 2,
-      backgroundColor: "#070b10",
+      backgroundColor: COLOR_OUTER_BG,
     },
-    Text({
-      content: ui.inputMode
-        ? `${ui.inputMode.prompt}${ui.inputValue}█`
-        : ui.mode === "detail"
-          ? "esc graph   q quit"
-          : `arrows/hjkl move   ${enterLabel}   tab next   shift+tab sibling   space select   m merge   s switch   d delete leaf   q quit`,
-      fg: ui.inputMode ? "#7dd3fc" : "#94a3b8",
-    }),
+    ...fragments,
   );
 }
 
@@ -965,11 +1164,13 @@ function isMultitabEnabled(config?: CcflowConfig): boolean {
   return config?.terminal.multitab ?? false;
 }
 
-function field(label: string, value: string, color = "#cbd5e1") {
+function fieldStack(label: string, value: string, color: string) {
+  const rule = "─".repeat(Math.max(0, Math.min(18, value.length)));
   return Box(
-    { flexDirection: "row" },
-    Text({ content: label.padEnd(10), fg: "#64748b" }),
-    Text({ content: value, fg: color }),
+    { flexDirection: "column" },
+    Text({ content: label.toUpperCase(), fg: COLOR_TERTIARY }),
+    Text({ content: rule, fg: COLOR_DIM_RULE }),
+    Text({ content: value, fg: color, wrapMode: "word" }),
   );
 }
 
@@ -1030,27 +1231,45 @@ function moveFocus(state: CcflowState, currentId: string, direction: Direction):
   return candidates[0]?.id ?? currentId;
 }
 
-function nodeAccent(state: CcflowState, node: CcflowNode): string {
-  if (node.status === "CommitFailed" || node.status === "MergeConflict" || node.status === "JobFailed") return "#fb7185";
-  if (node.type === "internal") return "#64748b";
+function nodeAccent(state: CcflowState, node: CcflowNode): NodeAccent {
+  const base: NodeAccent = {
+    bar: COLOR_FOCUS_ACCENT,
+    bg: "#0b1120",
+    fg: COLOR_PRIMARY,
+    dim: COLOR_TERTIARY,
+  };
+  if (ERROR_STATUSES.has(node.status)) {
+    return { ...base, bar: COLOR_STATUS_ERROR };
+  }
+  if (node.type === "internal") {
+    return { ...base, bar: COLOR_STATUS_SEALED };
+  }
   const worktree = getWorktree(state, node.git.worktreeId);
-  return worktree.id === state.currentWorktreeId ? "#22c55e" : "#facc15";
+  if (worktree.id === state.currentWorktreeId) {
+    return { ...base, bar: COLOR_CURRENT_LEAF };
+  }
+  return { ...base, bar: COLOR_OTHER_LEAF };
 }
 
 function statusColor(status: string): string {
-  if (status.includes("Failed") || status.includes("Conflict")) return "#fb7185";
-  if (status.includes("Running") || status.includes("Committing") || status.includes("Merge") || status === "Deleting") return "#7dd3fc";
-  if (status.includes("Awaiting")) return "#facc15";
-  if (status === "sealed") return "#94a3b8";
+  if (status.includes("Failed") || status.includes("Conflict")) return COLOR_STATUS_ERROR;
+  if (
+    status.includes("Running") ||
+    status.includes("Committing") ||
+    status.includes("Merge") ||
+    status === "Deleting"
+  )
+    return COLOR_STATUS_RUNNING;
+  if (status.includes("Awaiting")) return COLOR_STATUS_AWAITING;
+  if (status === "sealed") return COLOR_STATUS_SEALED;
   return "#cbd5e1";
 }
 
 function nodeIndicator(state: CcflowState, node: CcflowNode): string {
-  if (node.status === "CommitFailed" || node.status === "MergeConflict" || node.status === "JobFailed" || node.status === "ParentCommitFailed") return "◆";
-  if (node.status === "LeafRunning" || node.status === "Committing" || node.status === "ParentCommitting" || node.status === "MergeRunning" || node.status === "Deleting") return "◌";
-  if (node.status === "AwaitingParentCommit") return "◌";
-  if (node.type === "internal") return "○";
-  return getWorktree(state, node.git.worktreeId).id === state.currentWorktreeId ? "●" : "●";
+  if (ERROR_STATUSES.has(node.status)) return "◇";
+  if (RUNNING_STATUSES.has(node.status)) return "◌";
+  if (node.type === "internal") return "·";
+  return "●";
 }
 
 function truncate(value: string, width: number): string {

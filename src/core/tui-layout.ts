@@ -160,10 +160,23 @@ function drawEdge(cells: string[][], from: PositionedNode, to: PositionedNode, v
   const endX = to.x - 1;
   const endY = to.y + Math.floor(to.height / 2);
   const midX = Math.max(startX + 1, Math.floor((startX + endX) / 2));
-  drawHorizontal(cells, startX, midX, startY, viewport);
-  drawVertical(cells, midX, startY, endY, viewport);
-  drawHorizontal(cells, midX, endX, endY, viewport);
-  setWorldCell(cells, endX, endY, viewport, ">");
+  if (endY === startY) {
+    // Straight horizontal connector — a single stroke ending in the arrow head.
+    drawHorizontal(cells, startX, endX - 1, startY, viewport);
+  } else {
+    drawHorizontal(cells, startX, midX, startY, viewport);
+    drawVertical(cells, midX, startY, endY, viewport);
+    drawHorizontal(cells, midX, endX - 1, endY, viewport);
+    // Replace the two elbow cells with the appropriate Unicode box-drawing
+    // character so the L-bend reads as one continuous connector rather than
+    // the overlap of horizontal/vertical strokes.
+    const goingDown = endY > startY;
+    const firstElbow = goingDown ? "┐" : "┘"; // right-then-down | right-then-up
+    const secondElbow = goingDown ? "└" : "┌"; // down-then-right | up-then-right
+    setWorldCell(cells, midX, startY, viewport, firstElbow);
+    setWorldCell(cells, midX, endY, viewport, secondElbow);
+  }
+  setWorldCell(cells, endX, endY, viewport, "▶");
 }
 
 function drawHorizontal(cells: string[][], x1: number, x2: number, y: number, viewport: GraphViewport): void {
@@ -172,7 +185,7 @@ function drawHorizontal(cells: string[][], x1: number, x2: number, y: number, vi
   const width = cells[screenY]?.length ?? 0;
   const minX = Math.max(Math.min(x1, x2), viewport.x);
   const maxX = Math.min(Math.max(x1, x2), viewport.x + width - 1);
-  for (let x = minX; x <= maxX; x += 1) setWorldCell(cells, x, y, viewport, "-");
+  for (let x = minX; x <= maxX; x += 1) setWorldCell(cells, x, y, viewport, "─");
 }
 
 function drawVertical(cells: string[][], x: number, y1: number, y2: number, viewport: GraphViewport): void {
@@ -180,7 +193,7 @@ function drawVertical(cells: string[][], x: number, y1: number, y2: number, view
   if (screenX < 0 || screenX >= (cells[0]?.length ?? 0)) return;
   const minY = Math.max(Math.min(y1, y2), viewport.y);
   const maxY = Math.min(Math.max(y1, y2), viewport.y + cells.length - 1);
-  for (let y = minY; y <= maxY; y += 1) setWorldCell(cells, x, y, viewport, "|");
+  for (let y = minY; y <= maxY; y += 1) setWorldCell(cells, x, y, viewport, "│");
 }
 
 function setWorldCell(cells: string[][], x: number, y: number, viewport: GraphViewport, value: string): void {

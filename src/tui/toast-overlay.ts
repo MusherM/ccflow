@@ -34,20 +34,20 @@ export interface ToasterOverlayOptions {
 
 const DEFAULT_ICONS: Record<ToastType, string> = {
   default: "•",
-  success: "✓",
-  error: "✗",
-  warning: "⚠",
-  info: "ℹ",
+  success: "●",
+  error: "◇",
+  warning: "◌",
+  info: "○",
   loading: "◌",
 };
 
-const ACCENTS: Record<ToastType, { border: string; icon: string; bg: string }> = {
-  default: { border: "#475569", icon: "#cbd5e1", bg: "#0f172a" },
-  success: { border: "#22c55e", icon: "#22c55e", bg: "#0b1f12" },
-  error: { border: "#ef4444", icon: "#ef4444", bg: "#1f0b0b" },
-  warning: { border: "#f59e0b", icon: "#facc15", bg: "#1f1505" },
-  info: { border: "#3b82f6", icon: "#7dd3fc", bg: "#0a1424" },
-  loading: { border: "#7dd3fc", icon: "#7dd3fc", bg: "#0a1424" },
+const ACCENTS: Record<ToastType, { bar: string; icon: string; bg: string }> = {
+  default: { bar: "#64748b", icon: "#cbd5e1", bg: "#0d1117" },
+  success: { bar: "#86efac", icon: "#86efac", bg: "#0d1117" },
+  error: { bar: "#fca5a5", icon: "#fca5a5", bg: "#0d1117" },
+  warning: { bar: "#fcd34d", icon: "#fcd34d", bg: "#0d1117" },
+  info: { bar: "#7dd3fc", icon: "#7dd3fc", bg: "#0d1117" },
+  loading: { bar: "#7dd3fc", icon: "#7dd3fc", bg: "#0d1117" },
 };
 
 /** Build the toaster overlay tree. Call this on every TUI render frame. */
@@ -112,7 +112,7 @@ function toastBox(
     );
   }
   titleChildren.push(
-    Text({ content: truncate(entry.message, maxWidth - 4), fg: "#e5e7eb", attributes: TextAttributes.BOLD }),
+    Text({ content: truncate(entry.message, maxWidth - 6), fg: "#e2e7eb", attributes: TextAttributes.BOLD }),
   );
 
   const innerChildren: AnyChild[] = [
@@ -122,28 +122,42 @@ function toastBox(
     ),
   ];
   if (entry.description) {
+    const lines = entry.description.split(/\r?\n/);
     innerChildren.push(
-      Text({
-        content: truncate(entry.description, maxWidth - 6),
-        fg: "#94a3b8",
-      }),
+      Box(
+        { flexDirection: "column" },
+        ...lines.map((line) =>
+          Box(
+            { flexDirection: "row" },
+            Text({ content: "│ ", fg: "#475569" }),
+            Text({ content: truncate(line, maxWidth - 8), fg: "#94a3b8" }),
+          ),
+        ),
+      ),
     );
   }
 
   return Box(
     {
       id: `toast-${entry.id}`,
-      border: true,
-      borderStyle: "rounded",
-      borderColor: accent.border,
       backgroundColor: accent.bg,
       paddingLeft: 1,
       paddingRight: 1,
-      paddingTop: 0,
-      paddingBottom: 0,
+      paddingTop: 1,
+      paddingBottom: 1,
       flexDirection: "column",
       width: maxWidth,
+      position: "relative",
     },
+    Text({
+      content: "▌",
+      fg: accent.bar,
+      position: "absolute",
+      left: -1,
+      top: 0,
+      width: 1,
+      height: undefined,
+    }),
     ...innerChildren,
   );
 }
