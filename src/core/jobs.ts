@@ -66,7 +66,7 @@ export class JobRunner {
       return {
         success: true,
         commitHash: existingCommit ?? node.git.commitHash ?? undefined,
-        commitMessage: node.title,
+        commitMessage: node.git.commitMessage ?? node.title,
         summary: existingCommit ? this.git.diffStats(worktree.path, existingCommit) : node.stats,
       };
     }
@@ -142,12 +142,13 @@ export class JobRunner {
 
       // If nothing needed committing, return the existing commit — this is not an error
       if (commitHash === existingCommit) {
-        this.finishJob(state.repoRoot, job, { commitHash, commitMessage: node.title, summary: node.stats });
+        const commitMessage = node.git.commitMessage ?? node.title;
+        this.finishJob(state.repoRoot, job, { commitHash, commitMessage, summary: node.stats });
         node.locked = false;
         node.jobId = null;
         worktree.locked = false;
         worktree.status = worktree.id === state.currentWorktreeId ? "current" : "other";
-        return { success: true, commitHash, commitMessage: node.title, summary: node.stats };
+        return { success: true, commitHash, commitMessage, summary: node.stats };
       }
 
       const commitMessage = this.git.lastCommitMessage(worktree.path);
@@ -266,8 +267,10 @@ export class JobRunner {
     if (isLeafNode(state, node.id)) {
       const result = await this.commitLeaf(state, node.id);
       if (!result.success || !result.commitHash) throw new Error(result.error ?? "Commit failed before sibling creation");
+      const commitMessage = result.commitMessage ?? node.git.commitMessage ?? node.title;
       node.git.commitHash = result.commitHash;
-      node.title = firstLine(result.commitMessage ?? node.title);
+      node.git.commitMessage = commitMessage;
+      node.title = firstLine(commitMessage) || node.title;
       node.stats = result.summary ?? node.stats;
       saveSession(state.repoRoot, node);
     }
@@ -374,8 +377,10 @@ export class JobRunner {
       ensureCommitReady(state, leaf.id);
       const result = await this.commitLeaf(state, leaf.id);
       if (!result.success || !result.commitHash) throw new Error(result.error ?? `Commit failed for ${leaf.id}`);
+      const commitMessage = result.commitMessage ?? leaf.git.commitMessage ?? leaf.title;
       leaf.git.commitHash = result.commitHash;
-      leaf.title = firstLine(result.commitMessage ?? leaf.title);
+      leaf.git.commitMessage = commitMessage;
+      leaf.title = firstLine(commitMessage) || leaf.title;
       leaf.stats = result.summary ?? leaf.stats;
       saveSession(state.repoRoot, leaf);
     }
@@ -473,14 +478,16 @@ export class JobRunner {
         this.git.checkoutNewBranch(worktreePath, worktreeBranch);
       }
 
+      const commitMessage = this.git.lastCommitMessage(worktreePath);
       const node = createMergeNode(state, {
         nodeIds,
         worktreeId,
         worktreePath,
         branchName: worktreeBranch,
         commitHash,
+        commitMessage,
       });
-      node.title = this.git.lastCommitMessage(worktreePath).split(/\r?\n/, 1)[0]?.trim() || "Merge";
+      node.title = commitMessage.split(/\r?\n/, 1)[0]?.trim() || "Merge";
       node.stats = this.git.diffStats(worktreePath, commitHash);
       saveState(state);
       logEvent(state.repoRoot, "merge-leaves:auto-merge-success", { mergeNodeId: node.id, commitHash });
@@ -533,9 +540,11 @@ export class JobRunner {
         if (detached) {
           this.git.checkoutNewBranch(worktreePath, worktreeBranch);
         }
+        const commitMessage = this.git.lastCommitMessage(worktreePath);
         node.git.commitHash = commitHash;
+        node.git.commitMessage = commitMessage;
         node.status = node.cc.sessionId ? "LeafResumable" : "LeafNew";
-        node.title = this.git.lastCommitMessage(worktreePath).split(/\r?\n/, 1)[0]?.trim() || "Merge";
+        node.title = commitMessage.split(/\r?\n/, 1)[0]?.trim() || "Merge";
         node.stats = this.git.diffStats(worktreePath, commitHash);
         node.conflictFiles = [];
         saveState(state);

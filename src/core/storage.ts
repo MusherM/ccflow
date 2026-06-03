@@ -38,6 +38,7 @@ export function loadOrInitState(input: {
   repoRoot: string;
   branch: string;
   commitHash: string | null;
+  commitMessage?: string | null;
 }): CcflowState {
   ensureCcflowDirs(input.repoRoot);
 

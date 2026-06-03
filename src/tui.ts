@@ -52,6 +52,8 @@ interface EnterLeafOptions {
 type Direction = "left" | "right" | "up" | "down";
 type UiMode = "graph" | "detail";
 
+const SIDE_PANEL_WIDTH = 30;
+
 interface InputMode {
   prompt: string;
   onConfirm: (value: string) => void;
@@ -681,8 +683,8 @@ function renderApp(renderer: CliRenderer, state: CcflowState, ui: UiState, confi
   const width = Math.max(76, renderer.terminalWidth || renderer.width || 120);
   const height = Math.max(26, renderer.terminalHeight || renderer.height || 36);
   const compact = width < 116;
-  const graphWidth = compact ? Math.max(70, width - 2) : Math.max(70, width - 40);
-  const graphHeight = Math.max(19, height - 7);
+  const graphWidth = compact ? Math.max(70, width - 2) : Math.max(70, width - SIDE_PANEL_WIDTH - 4);
+  const panelHeight = Math.max(19, height - 3);
   const focusNode = ensureUiFocus(state, ui);
 
   renderer.root.add(
@@ -694,7 +696,6 @@ function renderApp(renderer: CliRenderer, state: CcflowState, ui: UiState, confi
         flexDirection: "column",
         backgroundColor: "#070b10",
       },
-      toolbar(state, ui),
       Box(
         {
           flexGrow: 1,
@@ -702,10 +703,11 @@ function renderApp(renderer: CliRenderer, state: CcflowState, ui: UiState, confi
           paddingLeft: 1,
           paddingRight: 1,
           paddingTop: 1,
-          gap: 1,
+          gap: 0,
+          backgroundColor: "#020617",
         },
-        ui.mode === "detail" ? detailPanel(state, focusNode, graphWidth, graphHeight, config) : graphPanel(state, ui, focusNode, graphWidth, graphHeight),
-        compact ? compactSummary(state, focusNode, ui) : sidePanel(state, focusNode, ui),
+        ui.mode === "detail" ? detailPanel(state, focusNode, graphWidth, panelHeight, config) : graphPanel(state, ui, focusNode, graphWidth, panelHeight),
+        compact ? compactSummary(state, focusNode, ui) : sidePanel(state, focusNode, ui, panelHeight),
       ),
       footer(ui, config),
     ),
@@ -743,32 +745,6 @@ function restoreEnvValue(name: string, value: string | undefined): void {
   else process.env[name] = value;
 }
 
-function toolbar(state: CcflowState, ui: UiState) {
-  const current = getWorktree(state, state.currentWorktreeId);
-  return Box(
-    {
-      height: 3,
-      border: ["bottom"],
-      borderStyle: "single",
-      borderColor: "#1f2937",
-      paddingLeft: 2,
-      paddingRight: 2,
-      alignItems: "center",
-      justifyContent: "space-between",
-      backgroundColor: "#0f172a",
-    },
-    Text({
-      content: "CCFlow  node graph  OpenTUI",
-      fg: "#e5e7eb",
-      attributes: TextAttributes.BOLD,
-    }),
-    Text({
-      content: ui.task ? `task: ${ui.task}` : `${current.branch}  selected ${ui.selectedIds.size}`,
-      fg: ui.task ? "#facc15" : ui.selectedIds.size ? "#facc15" : "#94a3b8",
-    }),
-  );
-}
-
 function graphPanel(state: CcflowState, ui: UiState, focusNode: CcflowNode, width: number, height: number) {
   const canvasWidth = width - 2;
   const canvasHeight = height - 2;
@@ -784,7 +760,7 @@ function graphPanel(state: CcflowState, ui: UiState, focusNode: CcflowNode, widt
       border: true,
       borderStyle: "rounded",
       borderColor: "#334155",
-      title: " node graph ",
+      title: ` ${truncate(state.repoRoot, Math.max(10, width - 4))} `,
       backgroundColor: "#020617",
       position: "relative",
       overflow: "hidden",
@@ -846,13 +822,12 @@ function nodeCard(
   );
 }
 
-function sidePanel(state: CcflowState, node: CcflowNode, ui: UiState) {
+function sidePanel(state: CcflowState, node: CcflowNode, ui: UiState, height: number) {
   const worktree = getWorktree(state, node.git.worktreeId);
   const accent = nodeAccent(state, node);
+  const commitMessageBody = node.git.commitHash ? messageBody(node.git.commitMessage?.trim() || node.title) : "";
   const children = [
     Text({ content: node.title, fg: accent, attributes: TextAttributes.BOLD }),
-    field("id", node.id),
-    field("type", node.type, node.type === "leaf" ? "#facc15" : "#94a3b8"),
     field("status", node.status, statusColor(node.status)),
     field("branch", worktree.branch, accent),
     field(
@@ -860,8 +835,6 @@ function sidePanel(state: CcflowState, node: CcflowNode, ui: UiState) {
       worktree.locked ? `${worktree.status} locked` : worktree.status,
       worktree.locked ? "#7dd3fc" : worktree.status === "current" ? "#22c55e" : "#facc15",
     ),
-    field("commit", node.git.commitHash?.slice(0, 12) ?? "none"),
-    field("cc", node.status === "LeafRunning" ? "open tab" : node.cc.sessionId ? "resumable" : "none"),
     node.jobId ? field("job", node.jobId, "#7dd3fc") : null,
     node.pendingParentJobId ? field("parent job", node.pendingParentJobId, "#7dd3fc") : null,
     node.conflictFiles?.length ? field("conflicts", node.conflictFiles.join(", "), "#fb7185") : null,
@@ -872,17 +845,17 @@ function sidePanel(state: CcflowState, node: CcflowNode, ui: UiState) {
       content: `${node.stats.filesChanged} files  +${node.stats.insertions}  -${node.stats.deletions}`,
       fg: "#cbd5e1",
     }),
-    Text({ content: truncate(worktree.path, 34), fg: "#94a3b8" }),
+    commitMessageBody ? Text({ content: commitMessageBody, fg: "#94a3b8", wrapMode: "word" }) : null,
     Text({ content: ui.message || "Ready", fg: ui.busy ? "#facc15" : "#64748b", wrapMode: "word" }),
   ].filter((child) => child != null);
   return Box(
     {
-      width: 36,
-      height: "100%",
+      width: SIDE_PANEL_WIDTH,
+      height,
       border: true,
       borderStyle: "rounded",
       borderColor: accent,
-      backgroundColor: "#0f172a",
+      backgroundColor: "#020617",
       paddingLeft: 1,
       paddingRight: 1,
       flexDirection: "column",
@@ -890,6 +863,14 @@ function sidePanel(state: CcflowState, node: CcflowNode, ui: UiState) {
     },
     ...children,
   );
+}
+
+function messageBody(message: string): string {
+  return message
+    .split(/\r?\n/)
+    .slice(1)
+    .join("\n")
+    .trim();
 }
 
 function compactSummary(state: CcflowState, node: CcflowNode, ui: UiState) {
@@ -947,7 +928,7 @@ function detailPanel(state: CcflowState, node: CcflowNode, width: number, height
       border: true,
       borderStyle: "rounded",
       borderColor: nodeAccent(state, node),
-      title: " node detail ",
+      title: ` ${truncate(state.repoRoot, Math.max(10, width - 4))} `,
       backgroundColor: "#020617",
       paddingLeft: 2,
       paddingRight: 2,

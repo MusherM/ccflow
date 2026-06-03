@@ -51,7 +51,7 @@ test("creating the next node seals the parent and keeps the child as the editabl
   const child = sealLeafAndCreateChild(state, {
     leafId: "node_root",
     commitHash: "def456",
-    commitMessage: "feat: add graph state",
+    commitMessage: "feat: add graph state\n\nKeep the full commit body.",
     sessionId: "claude-session-1",
     stats: { filesChanged: 2, insertions: 20, deletions: 3, symbolsChanged: ["Graph.create"] },
     now: "2026-05-18T10:30:00.000Z",
@@ -62,6 +62,8 @@ test("creating the next node seals the parent and keeps the child as the editabl
   assert.equal(state.nodes.node_root?.type, "internal");
   assert.equal(state.nodes.node_root?.status, "sealed");
   assert.equal(state.nodes.node_root?.git.commitHash, "def456");
+  assert.equal(state.nodes.node_root?.title, "feat: add graph state");
+  assert.equal(state.nodes.node_root?.git.commitMessage, "feat: add graph state\n\nKeep the full commit body.");
   assert.deepEqual(state.nodes.node_root?.children, ["node_child"]);
   assert.equal(state.nodes.node_child?.type, "leaf");
   assert.equal(state.nodes.node_child?.git.worktreeId, "wt_main");

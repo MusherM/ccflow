@@ -81,6 +81,7 @@ export function initCcflowProject(input: {
     repoRoot,
     branch: git.currentBranch(repoRoot),
     commitHash: git.currentCommit(repoRoot),
+    commitMessage: git.lastCommitMessage(repoRoot),
   });
   normalizeAfterBoot(state);
   saveState(state);
@@ -96,6 +97,7 @@ export function loadInitializedState(repoRoot: string, git = new GitAdapter()): 
     repoRoot,
     branch: git.currentBranch(repoRoot),
     commitHash: git.currentCommit(repoRoot),
+    commitMessage: git.lastCommitMessage(repoRoot),
   });
   normalizeAfterBoot(state);
   saveState(state);

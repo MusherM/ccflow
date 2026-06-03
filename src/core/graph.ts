@@ -22,6 +22,7 @@ export function createInitialState(input: {
   repoRoot: string;
   branch: string;
   commitHash: string | null;
+  commitMessage?: string | null;
   now?: string;
   idFactory?: IdFactory;
 }): CcflowState {
@@ -38,6 +39,7 @@ export function createInitialState(input: {
     updatedAt: now,
     git: {
       commitHash: input.commitHash,
+      commitMessage: input.commitMessage ?? null,
       branch: input.branch,
       worktreeId: "wt_main",
     },
@@ -189,6 +191,7 @@ export function sealLeafAndCreateChild(
   leaf.type = "internal";
   leaf.status = "sealed";
   leaf.git.commitHash = input.commitHash;
+  leaf.git.commitMessage = input.commitMessage;
   leaf.title = firstLine(input.commitMessage) || leaf.title;
   leaf.stats = input.stats;
   leaf.cc.sessionId = input.sessionId;
@@ -207,6 +210,7 @@ export function sealLeafAndCreateChild(
     updatedAt: now,
     git: {
       commitHash: null,
+      commitMessage: null,
       branch: leaf.git.branch,
       worktreeId: leaf.git.worktreeId,
     },
@@ -264,6 +268,7 @@ export function createPendingChildFromLeaf(
     updatedAt: now,
     git: {
       commitHash: null,
+      commitMessage: null,
       branch: leaf.git.branch,
       worktreeId: leaf.git.worktreeId,
     },
@@ -308,6 +313,7 @@ export function finalizePendingParentCommit(
   parent.locked = false;
   parent.jobId = null;
   parent.git.commitHash = input.commitHash;
+  parent.git.commitMessage = input.commitMessage;
   parent.title = firstLine(input.commitMessage) || parent.title;
   parent.stats = input.stats;
   parent.cc.sessionId = input.sessionId;
@@ -406,6 +412,7 @@ export function branchFromNode(
     updatedAt: now,
     git: {
       commitHash: null,
+      commitMessage: null,
       branch: input.branchName,
       worktreeId: worktree.id,
     },
@@ -433,6 +440,7 @@ export function createMergeNode(
     worktreePath: string;
     branchName: string;
     commitHash?: string | null;
+    commitMessage?: string | null;
     now?: string;
     idFactory?: IdFactory;
   },
@@ -461,6 +469,7 @@ export function createMergeNode(
     updatedAt: now,
     git: {
       commitHash: input.commitHash ?? null,
+      commitMessage: input.commitMessage ?? null,
       branch: input.branchName,
       worktreeId: input.worktreeId,
     },

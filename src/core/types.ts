@@ -32,6 +32,7 @@ export interface NodeStats {
 
 export interface NodeGitInfo {
   commitHash: string | null;
+  commitMessage?: string | null;
   branch: string;
   worktreeId: string;
 }
