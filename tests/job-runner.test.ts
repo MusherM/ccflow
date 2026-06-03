@@ -14,10 +14,12 @@ import {
   normalizeAfterBoot,
 } from "../src/core/graph.js";
 import { JobRunner } from "../src/core/jobs.js";
+import { buildCommitPrompt } from "../src/core/prompts.js";
 import { loadOrInitState, saveState } from "../src/core/storage.js";
 import { resetTerminalForChildProcess } from "../src/core/terminal.js";
 import type { CcflowState } from "../src/core/types.js";
-import { claudeCliConfig, withClaudeCliEnv } from "./helpers/claude-cli.js";
+import { loadConfig } from "../src/core/config.js";
+import { claudeCliConfig, realClaudePromptGate, withClaudeCliEnv } from "./helpers/claude-cli.js";
 
 test("creating the next leaf delegates the dirty-worktree commit to Claude Code", async (t) => {
   let claude: ReturnType<typeof claudeCliConfig>;
@@ -27,11 +29,25 @@ test("creating the next leaf delegates the dirty-worktree commit to Claude Code"
     t.skip(`Claude Code CLI unavailable: ${(error as Error).message}`);
     return;
   }
-  const { state, repoRoot } = createRepoState();
+  const { state, repoRoot } = createRepoState({
+    now: "2026-01-01T00:00:00.000Z",
+    idFactory: (prefix) => `${prefix}_real_cc_commit`,
+  });
   const git = new GitAdapter();
   const readme = path.join(repoRoot, "README.md");
   const beforeCommit = git.currentCommit(repoRoot);
   fs.appendFileSync(readme, "updated by test before Claude commit\n");
+  const prompt = buildCommitPrompt({
+    config: loadConfig({ repoRoot }).config,
+    node: getNode(state, state.currentNodeId),
+    gitStatus: git.statusShort(repoRoot),
+    gitDiff: git.diff(repoRoot),
+  });
+  const gate = realClaudePromptGate("job-runner.create-next.commit", prompt);
+  if (!gate.shouldRun) {
+    t.skip(gate.reason);
+    return;
+  }
 
   const runner = new JobRunner(git, new ClaudeAdapter());
   const child = await withClaudeCliEnv(claude, () => runner.createNextNode(state, state.currentNodeId));
@@ -47,6 +63,7 @@ test("creating the next leaf delegates the dirty-worktree commit to Claude Code"
   assert.notEqual(git.currentCommit(repoRoot), beforeCommit);
   assert.ok(git.lastCommitMessage(repoRoot).length > 0);
   assertGraphInvariants(state);
+  gate.markPassed();
 });
 
 test("dirty Tab resumes the parent Claude session for commit and leaves child session clean", async () => {
@@ -336,17 +353,26 @@ test("normalizeAfterBoot converts stale transient session state on locked nodes"
   assertGraphInvariants(state);
 });
 
-function createRepoState(): { state: CcflowState; repoRoot: string } {
+function createRepoState(options: { now?: string; idFactory?: (prefix: string) => string } = {}): { state: CcflowState; repoRoot: string } {
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-runner-"));
   const git = new GitAdapter();
   git.ensureRepo(repoRoot);
   fs.writeFileSync(path.join(repoRoot, "README.md"), "initial\n");
   git.commit(repoRoot, "test: initial readme");
-  const state = loadOrInitState({
-    repoRoot,
-    branch: git.currentBranch(repoRoot),
-    commitHash: git.currentCommit(repoRoot),
-  });
+  const state = options.idFactory || options.now
+    ? createInitialState({
+      repoRoot,
+      branch: git.currentBranch(repoRoot),
+      commitHash: git.currentCommit(repoRoot),
+      now: options.now,
+      idFactory: options.idFactory,
+    })
+    : loadOrInitState({
+      repoRoot,
+      branch: git.currentBranch(repoRoot),
+      commitHash: git.currentCommit(repoRoot),
+    });
+  if (options.idFactory || options.now) saveState(state);
   return { state, repoRoot };
 }
 

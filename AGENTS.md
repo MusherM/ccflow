@@ -8,7 +8,9 @@ CCFlow 是面向 Claude Code 的节点式会话和 Git 工作流管理器，状�
 npm run dev -- --repo /path/to/repo   # 用 Bun 启动开发版 CLI/TUI
 npm run build                 # 编译发布用 dist/
 npm run typecheck             # 类型检查
-npm run test                  # 运行测试（含真实 claude -p 验证）
+npm run test                  # 运行测试（真实 claude -p 验证会按 prompt 指纹缓存）
+npm run test -- --skip-real-cc   # 跳过真实 Claude Code / cc 测试
+npm run test -- --force-real-cc  # 忽略缓存，强制重跑真实 Claude Code / cc 测试
 npm run pack:dry-run          # 验证 npm 包内容
 npm run verify:install        # 生成 tarball 并在隔离 prefix 全局安装验证
 npm run proto:opentui         # 运行交互原型
@@ -59,7 +61,7 @@ TUI 主循环必须启动 `createToastExpiryScheduler()`，让 toast 到期后�
 - 每当更新 `README.md` 时，必须同步更新 `README_zh.md`，保持英文和中文 README 的安装、首次运行、命令、配置和发布说明语义一致。
 - CCFlow 不提供 basic TUI fallback；启动时必须让 OpenTUI 可用，优先通过 `bun` 运行发布入口。
 - `src/core/graph.ts` 中的不变量是系统边界，修改前先补测试。
-- 所有涉及 Claude Code / cc 的测试必须走真实 cc 流程，不能用 fake / stub / mock 替代；直接在沙箱外运行测试，确保 `claude` / `cc` CLI 能被真实调用起来。
+- 所有涉及 Claude Code / cc 的测试必须走真实 cc 流程，不能用 fake / stub / mock 替代；直接在沙箱外运行测试，确保 `claude` / `cc` CLI 能被真实调用起来。日常可用 `npm run test -- --skip-real-cc` 跳过真实 cc 层；默认测试会用 `.ccflow/test-cache/real-cc.json` 按发送给 Claude 的 prompt 指纹跳过已验证且 prompt 未变的 post-prompt 测试，发布前可用 `npm run test -- --force-real-cc` 刷新缓存。
 - npm 发布相关修改必须保持 `package.json#files` 为显式白名单，并用 `npm run pack:dry-run` 检查 tarball 内容。
 - Prompt 配置默认只能追加指导，不允许项目共享配置完整替换 commit / merge kernel prompt；CCFlow 依赖这些 kernel 指令维持 job 后置条件。
 - `.ccflow/` 是运行时状态目录；共享项目配置使用仓库根目录 `.ccflowrc`，本机项目覆盖使用 `.ccflow/config.local.json`。

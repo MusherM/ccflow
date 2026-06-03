@@ -5,10 +5,13 @@ import { spawnSync } from "node:child_process";
 
 const projectRoot = process.cwd();
 const coverage = process.argv.includes("--coverage");
+const skipRealCc = process.argv.includes("--skip-real-cc");
+const forceRealCc = process.argv.includes("--force-real-cc");
 const realHome = os.homedir();
 const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-test-home-"));
 const fakeXdgHome = path.join(fakeHome, ".config");
 const fakeCcflowConfig = path.join(fakeHome, ".ccflowrc");
+const realCcCache = path.join(projectRoot, ".ccflow", "test-cache", "real-cc.json");
 
 fs.mkdirSync(fakeXdgHome, { recursive: true });
 copyClaudeSettings(realHome, fakeHome);
@@ -20,6 +23,9 @@ const env = isolatedEnv({
   CCFLOW_CONFIG: fakeCcflowConfig,
   CCFLOW_TEST_HOME: fakeHome,
   CCFLOW_REAL_HOME: realHome,
+  CCFLOW_TEST_REAL_CC_CACHE: realCcCache,
+  ...(skipRealCc ? { CCFLOW_TEST_SKIP_REAL_CC: "1" } : {}),
+  ...(forceRealCc ? { CCFLOW_TEST_FORCE_REAL_CC: "1" } : {}),
 });
 configureTestGitDefaults(env);
 

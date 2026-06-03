@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CCFlow 真实 cc 测试分层与缓存设计报告</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f7f4;
+      --ink: #202124;
+      --muted: #626866;
+      --line: #d9ddd6;
+      --panel: #ffffff;
+      --code: #101418;
+      --code-bg: #eef1ee;
+      --accent: #1f7a6b;
+      --accent-2: #b4552a;
+      --soft: #e6f1ed;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 48px 24px 72px;
+    }
+    header {
+      padding-bottom: 28px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 28px;
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: 34px;
+      line-height: 1.18;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 34px 0 12px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+    h3 {
+      margin: 22px 0 10px;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+    p { margin: 0 0 12px; }
+    ul, ol { margin: 0 0 16px 22px; padding: 0; }
+    li { margin: 6px 0; }
+    code {
+      color: var(--code);
+      background: var(--code-bg);
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      padding: 1px 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+    pre {
+      margin: 14px 0 18px;
+      padding: 16px;
+      overflow: auto;
+      color: #edf4f1;
+      background: #17211f;
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    pre code {
+      color: inherit;
+      background: transparent;
+      border: 0;
+      padding: 0;
+    }
+    .lede {
+      max-width: 760px;
+      color: var(--muted);
+      font-size: 17px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin: 18px 0 22px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .card strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--accent);
+    }
+    .note {
+      background: var(--soft);
+      border-left: 4px solid var(--accent);
+      padding: 14px 16px;
+      margin: 16px 0;
+      border-radius: 0 8px 8px 0;
+    }
+    .warn {
+      background: #fff0e7;
+      border-left-color: var(--accent-2);
+    }
+    .flow {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      margin: 14px 0 18px;
+    }
+    .step {
+      display: grid;
+      grid-template-columns: 34px 1fr;
+      gap: 12px;
+      align-items: start;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 13px 14px;
+    }
+    .num {
+      display: inline-grid;
+      place-items: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: white;
+      font-weight: 700;
+      font-size: 13px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0 20px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    th {
+      color: #25312f;
+      background: #edf2ef;
+      font-weight: 700;
+    }
+    tr:last-child td { border-bottom: 0; }
+    footer {
+      margin-top: 42px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    @media (max-width: 760px) {
+      main { padding: 34px 18px 56px; }
+      h1 { font-size: 28px; }
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>真实 cc 测试分层与缓存设计报告</h1>
+      <p class="lede">本报告说明这次改动如何在不 mock / fake 真实 Claude Code 流程的前提下，把测试分成“发送指令前”和“发送指令后”两层，并用 prompt 指纹避免每次都重跑昂贵的真实 <code>cc</code> / <code>claude -p</code> 测试。</p>
+    </header>
+
+    <section>
+      <h2>目标与约束</h2>
+      <div class="grid">
+        <div class="card">
+          <strong>日常快跑</strong>
+          <p>提供 <code>npm run test -- --skip-real-cc</code>，开发时可以跳过所有真实 cc 测试。</p>
+        </div>
+        <div class="card">
+          <strong>默认省时</strong>
+          <p>默认测试仍允许真实 cc 层运行，但 post-prompt 测试会按 prompt 指纹缓存，未变化时跳过。</p>
+        </div>
+        <div class="card">
+          <strong>发布兜底</strong>
+          <p>提供 <code>npm run test -- --force-real-cc</code>，忽略缓存，强制刷新真实 cc 验证结果。</p>
+        </div>
+      </div>
+      <div class="note">
+        重要边界：涉及 Claude Code / cc 的测试仍然不使用 fake / stub / mock 替代真实 cc。缓存命中时是选择跳过已验证的真实层，而不是模拟它通过。
+      </div>
+    </section>
+
+    <section>
+      <h2>测试分层</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>层级</th>
+            <th>覆盖内容</th>
+            <th>是否昂贵</th>
+            <th>这次如何处理</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>发送指令前</td>
+            <td>配置加载、prompt 构造、graph / git / job runner 状态机、TUI 非真实 cc smoke、RecordingClaudeAdapter 验证调用参数。</td>
+            <td>低到中</td>
+            <td>每次照常运行，不走真实 cc 缓存。</td>
+          </tr>
+          <tr>
+            <td>发送指令后</td>
+            <td>真正调用 <code>claude -p &lt;prompt&gt;</code> 后，验证 cc 能把脏 worktree 提交干净，并产出真实 commit。</td>
+            <td>高</td>
+            <td>用 prompt SHA-256 指纹缓存；prompt 不变且之前通过时跳过。</td>
+          </tr>
+          <tr>
+            <td>交互式 cc 打开</td>
+            <td>TUI 按 Enter 后启动真实 Claude 交互进程。</td>
+            <td>高</td>
+            <td><code>--skip-real-cc</code> 会跳过；它不属于 headless prompt post-prompt 缓存，因为没有稳定的 <code>-p</code> 指令文本。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>入口设计</h2>
+      <p><code>scripts/run-node-tests.mjs</code> 现在负责解析测试参数，并把它们转换成测试进程内的环境变量。</p>
+      <pre><code>npm run test
+npm run test -- --skip-real-cc
+npm run test -- --force-real-cc</code></pre>
+      <table>
+        <thead>
+          <tr>
+            <th>参数 / 环境变量</th>
+            <th>含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>--skip-real-cc</code> → <code>CCFLOW_TEST_SKIP_REAL_CC=1</code></td>
+            <td>真实 cc helper 在探测 CLI 前直接抛出 skip 原因，因此不会启动或探测真实 Claude Code CLI。</td>
+          </tr>
+          <tr>
+            <td><code>--force-real-cc</code> → <code>CCFLOW_TEST_FORCE_REAL_CC=1</code></td>
+            <td>忽略已有缓存，post-prompt 真实 cc 测试必须重新运行，成功后覆盖缓存。</td>
+          </tr>
+          <tr>
+            <td><code>CCFLOW_TEST_REAL_CC_CACHE</code></td>
+            <td>缓存文件路径，runner 设置为项目内 <code>.ccflow/test-cache/real-cc.json</code>。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>缓存流程</h2>
+      <p>核心逻辑集中在 <code>tests/helpers/claude-cli.ts</code> 的 <code>realClaudePromptGate(name, prompt)</code>。</p>
+      <div class="flow">
+        <div class="step"><span class="num">1</span><div>测试先构造即将发送给 Claude 的真实 prompt。这里使用 <code>loadConfig({ repoRoot }).config</code>、当前节点、<code>git status</code> 和 <code>git diff</code>，尽量和生产路径里的 prompt 完全一致。</div></div>
+        <div class="step"><span class="num">2</span><div><code>realClaudePromptGate</code> 对 prompt 做 <code>sha256</code>，得到 <code>promptHash</code>。</div></div>
+        <div class="step"><span class="num">3</span><div>读取 <code>.ccflow/test-cache/real-cc.json</code>，按测试场景名查找上次通过的 <code>promptHash</code>。</div></div>
+        <div class="step"><span class="num">4</span><div>如果 hash 一致且没有 <code>--force-real-cc</code>，测试调用 <code>t.skip()</code>，不再启动真实 <code>claude -p</code>。</div></div>
+        <div class="step"><span class="num">5</span><div>如果 hash 不一致或没有缓存，测试继续真实运行 cc。断言全部通过后调用 <code>gate.markPassed()</code> 写入新的缓存 marker。</div></div>
+      </div>
+      <pre><code>{
+  "version": 1,
+  "entries": {
+    "job-runner.create-next.commit": {
+      "promptHash": "…sha256…",
+      "passedAt": "2026-06-03T..."
+    },
+    "tui-smoke.tab.commit": {
+      "promptHash": "…sha256…",
+      "passedAt": "2026-06-03T..."
+    }
+  }
+}</code></pre>
+    </section>
+
+    <section>
+      <h2>已接入缓存的真实 cc 场景</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>缓存 key</th>
+            <th>测试文件</th>
+            <th>验证内容</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>job-runner.create-next.commit</code></td>
+            <td><code>tests/job-runner.test.ts</code></td>
+            <td>直接从 JobRunner 路径触发真实 Claude Code 提交，验证父节点 sealed、worktree clean、commit 发生。</td>
+          </tr>
+          <tr>
+            <td><code>tui-smoke.tab.commit</code></td>
+            <td><code>tests/tui-smoke.test.ts</code></td>
+            <td>从 TUI Tab 交互路径触发同类真实提交，验证 UI 到 job runner 的链路。</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="warn note">
+        TUI Enter 打开交互 Claude 的测试会被 <code>--skip-real-cc</code> 跳过，但没有放进 prompt 指纹缓存，因为它不发送 headless prompt，缺少“指令内容没有变化”这个判断依据。
+      </div>
+    </section>
+
+    <section>
+      <h2>为什么 prompt 指纹稳定</h2>
+      <p>真实 commit prompt 里包含节点信息、状态和 diff。为了避免“业务指令没变但测试随机值变了”导致缓存失效，这次对真实 cc 测试做了两点处理：</p>
+      <ul>
+        <li>真实 cc 测试使用稳定的 <code>node_real_cc_commit</code> / <code>node_real_cc_tui_commit</code> 这类测试 id。</li>
+        <li>测试写入的 README 内容固定，因此 <code>git diff</code> 也稳定。</li>
+      </ul>
+      <p>这样，只要 commit prompt 的内核、配置指导、测试输入 diff 没变，hash 就不会变化；一旦真实发送给 Claude 的指令发生变化，hash 会自然变化并触发重跑。</p>
+    </section>
+
+    <section>
+      <h2>运行行为示例</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>命令</th>
+            <th>行为</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>npm run test -- --skip-real-cc</code></td>
+            <td>完整运行发送指令前层；真实 cc 测试显示 skipped。适合日常开发。</td>
+          </tr>
+          <tr>
+            <td><code>npm run test</code></td>
+            <td>没有缓存或 prompt 变化时运行真实 cc；缓存命中时跳过 post-prompt 真实 cc 场景。</td>
+          </tr>
+          <tr>
+            <td><code>npm run test -- --force-real-cc</code></td>
+            <td>强制真实运行并刷新缓存。适合发布前、修改 prompt kernel 后、怀疑缓存失真时。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>验证情况</h2>
+      <p>本次实现后运行：</p>
+      <pre><code>npm run test -- --skip-real-cc</code></pre>
+      <p>结果：<code>201</code> tests，<code>198</code> pass，<code>3</code> skipped，<code>0</code> fail。3 个 skipped 都是按参数跳过的真实 cc 测试。</p>
+    </section>
+
+    <footer>
+      相关改动文件：<code>scripts/run-node-tests.mjs</code>、<code>tests/helpers/claude-cli.ts</code>、<code>tests/job-runner.test.ts</code>、<code>tests/tui-smoke.test.ts</code>、<code>tests/real-cc-cache.test.ts</code>。
+    </footer>
+  </main>
+</body>
+</html>
