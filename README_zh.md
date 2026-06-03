@@ -28,8 +28,6 @@ CCFlow 是一个 **节点式 Claude Code 会话管理器**。在 CCFlow 中，�
 
 在涉及 worktree 开发的场景下，你可以简单地通过在一个节点上敲击 `Shift+Tab` 新建一个同级节点。你可以在同级节点中同时进行工作，并在节点管理视图里使用空格键多选节点后按 `m` 进行合并。此时后台正在发生的是：CCFlow 调用你的 Claude Code CLI 对选中的多个节点进行 commit，并在所有节点 commit 完成后继续调用 Claude Code 进行自动化 merge。merge 完成后，CCFlow 会给你一个新的节点和干净的上下文，你可以继续你的工作。
 
-![CCFlow 项目结构介绍图](./assets/ccflow-intro.png)
-
 ## 环境要求
 
 - Node.js 22 或更新版本

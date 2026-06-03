@@ -28,8 +28,6 @@ In a workflow that does not need worktree-based parallel development, start `ccf
 
 In a worktree-based workflow, press `Shift+Tab` on a node to create a sibling node. Sibling nodes let you work on multiple features in parallel. In the node manager, press `Space` to select multiple nodes, then press `m` to merge them. Behind the scenes, CCFlow asks Claude Code to commit the selected nodes, waits for all commits to complete, then asks Claude Code to perform an automated merge. After the merge finishes, CCFlow gives you a new node and a clean context so you can keep working.
 
-![CCFlow project map](./assets/ccflow-intro.png)
-
 ## Requirements
 
 - Node.js 22 or newer
