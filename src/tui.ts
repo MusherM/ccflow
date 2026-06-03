@@ -971,19 +971,17 @@ function sidePanel(state: CcflowState, node: CcflowNode, ui: UiState, height: nu
 }
 
 function commitMessageBlock(body: string) {
+  // sidePanel 宽 30, paddingLeft 2 + paddingRight 1, "│ " 前缀 2 字符 → body 可用 25 字符
+  const innerWidth = Math.max(1, SIDE_PANEL_WIDTH - 2 - 1 - 2);
   return Box(
     { flexDirection: "column" },
-    ...body
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .map((line) =>
-        Box(
-          { flexDirection: "row" },
-          Text({ content: "│ ", fg: COLOR_QUATERNARY }),
-          Text({ content: truncate(line, 24), fg: COLOR_SECONDARY }),
-        ),
+    ...wrapText(body, innerWidth).map((line) =>
+      Box(
+        { flexDirection: "row" },
+        Text({ content: "│ ", fg: COLOR_QUATERNARY }),
+        Text({ content: line, fg: COLOR_SECONDARY }),
       ),
+    ),
   );
 }
 
@@ -1276,4 +1274,33 @@ function truncate(value: string, width: number): string {
   if (value.length <= width) return value;
   if (width <= 1) return value.slice(0, width);
   return `${value.slice(0, width - 1)}…`;
+}
+
+/**
+ * 按指定列宽对多段文本做按词换行；不折叠、不截断，长 commit body
+ * 会在侧边面板内自动折成多行，每行都带 `│ ` 前缀。
+ */
+function wrapText(body: string, width: number): string[] {
+  const max = Math.max(1, width);
+  const lines: string[] = [];
+  for (const paragraph of body.split(/\r?\n/)) {
+    const trimmed = paragraph.trim();
+    if (!trimmed) continue;
+    const words = trimmed.split(/\s+/);
+    let current = "";
+    for (const word of words) {
+      if (!current) {
+        current = word;
+        continue;
+      }
+      if (current.length + 1 + word.length <= max) {
+        current = `${current} ${word}`;
+      } else {
+        lines.push(current);
+        current = word;
+      }
+    }
+    if (current) lines.push(current);
+  }
+  return lines;
 }
