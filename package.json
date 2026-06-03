@@ -1,6 +1,6 @@
 {
   "name": "@musherm/ccflow",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Node-based Claude Code workflow manager for Git DAG and worktree sessions.",
   "license": "MIT",
   "type": "module",
