@@ -63,15 +63,17 @@ const COLOR_TERTIARY = "#64748b";
 const COLOR_QUATERNARY = "#475569";
 const COLOR_DIM_RULE = "#1e293b";
 const COLOR_FOCUS_ACCENT = "#7dd3fc";
-const COLOR_FOCUS_INVERT_BG = "#e2e8f0";
-const COLOR_FOCUS_INVERT_FG = "#020617";
 const COLOR_STATUS_ERROR = "#fca5a5";
 const COLOR_STATUS_RUNNING = "#7dd3fc";
 const COLOR_STATUS_AWAITING = "#fcd34d";
 const COLOR_STATUS_SEALED = "#64748b";
 const COLOR_CURRENT_LEAF = "#86efac";
 const COLOR_OTHER_LEAF = "#fde68a";
-const COLOR_SELECTED_BAR = "#fde68a";
+// Selected (space-toggled) cards get a full-card highlight in bright violet
+// (violet-400) so the selection reads at a glance. The accent bar stays
+// near-white to provide a clean left edge on the violet bg.
+const COLOR_SELECTED_BG = "#a78bfa";
+const COLOR_SELECTED_BAR = "#f1f5f9";
 
 const ERROR_STATUSES = new Set([
   "CommitFailed",
@@ -876,18 +878,24 @@ function nodeCard(
   const commit = node.git.commitHash ? node.git.commitHash.slice(0, 7) : "uncommitted";
 
   const errored = ERROR_STATUSES.has(node.status);
-  const cardBg = focused ? COLOR_FOCUS_INVERT_BG : accent.bg;
-  const cardFg = focused ? COLOR_FOCUS_INVERT_FG : accent.fg;
-  const dimFg = focused ? "#0f172a" : accent.dim;
-  const barColor = focused
-    ? COLOR_FOCUS_INVERT_FG
-    : errored
-      ? COLOR_STATUS_ERROR
-      : selected
-        ? COLOR_SELECTED_BAR
-        : accent.bar;
+  // Selected cards get a full-card violet highlight; otherwise the default
+  // dark card bg. Text flips to dark on the violet bg for readability.
+  const cardBg = selected ? COLOR_SELECTED_BG : accent.bg;
+  const cardFg = selected ? "#1e1b4b" : accent.fg;
+  const dimFg = selected ? "#312e81" : accent.dim;
+  // Hide the left accent bar when focused; the mint border takes over.
+  const showLeftBar = !focused;
+  const barColor = errored
+    ? COLOR_STATUS_ERROR
+    : selected
+      ? COLOR_SELECTED_BAR
+      : accent.bar;
+  // Always-on single border; blends with the card bg when not focused,
+  // switches to the mint accent (current-leaf green) to highlight focus.
+  const borderColor = focused ? COLOR_CURRENT_LEAF : cardBg;
   const titleBold = focused || selected;
-  const innerWidth = Math.max(0, width - 2);
+  // With border + padding on both sides, the inner content area is width - 4.
+  const innerWidth = Math.max(0, width - 4);
 
   return Box(
     {
@@ -897,19 +905,26 @@ function nodeCard(
       width,
       height: GRAPH_NODE_HEIGHT,
       backgroundColor: cardBg,
+      border: true,
+      borderStyle: "single",
+      borderColor,
       paddingLeft: 1,
       paddingRight: 1,
       flexDirection: "column",
     },
-    Text({
-      content: "▌",
-      fg: barColor,
-      position: "absolute",
-      left: -1,
-      top: 0,
-      width: 1,
-      height: GRAPH_NODE_HEIGHT,
-    }),
+    ...(showLeftBar
+      ? [
+          Text({
+            content: "▌",
+            fg: barColor,
+            position: "absolute",
+            left: -1,
+            top: 0,
+            width: 1,
+            height: GRAPH_NODE_HEIGHT,
+          }),
+        ]
+      : []),
     Text({
       content: `${indicator} ${truncate(node.title, Math.max(0, innerWidth - 2))}`,
       fg: cardFg,
@@ -917,7 +932,7 @@ function nodeCard(
     }),
     Text({
       content: truncate(`${node.type} · ${node.status}`, innerWidth),
-      fg: focused ? "#0f172a" : accent.bar,
+      fg: selected ? "#1e1b4b" : accent.bar,
     }),
     Text({
       content: truncate(`commit ${commit}  wt ${worktree.branch}`, innerWidth),

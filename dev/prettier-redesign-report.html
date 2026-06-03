@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>CCFlow · TUI 美学重构提案</title>
+<style>
+  :root {
+    --bg: #0a0d12;
+    --bg-panel: #11151c;
+    --bg-elev: #161b25;
+    --fg: #e2e8f0;
+    --fg-dim: #94a3b8;
+    --fg-mute: #64748b;
+    --accent-glass: #7dd3fc;
+    --accent-brut: #a3e635;
+    --error: #fca5a5;
+    --warn: #fcd34d;
+    --ok: #86efac;
+    --border: #1e293b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+    line-height: 1.55;
+    font-size: 15px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 48px 32px 96px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 24px; margin-bottom: 40px; }
+  h1 { font-size: 32px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+  h2 { font-size: 22px; font-weight: 600; margin: 48px 0 16px; letter-spacing: -0.01em; }
+  h3 { font-size: 17px; font-weight: 600; margin: 24px 0 8px; color: var(--fg); }
+  p { margin: 8px 0 16px; color: var(--fg-dim); }
+  .meta { color: var(--fg-mute); font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; }
+  .grid { display: grid; gap: 24px; }
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+  @media (max-width: 880px) { .grid-2 { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+  }
+  .glass .tag { color: var(--accent-glass); }
+  .brut .tag { color: var(--accent-brut); }
+  .tag { font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; }
+  pre {
+    background: #050810;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px 20px;
+    font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.45;
+    color: #d4d4d8;
+    overflow-x: auto;
+    white-space: pre;
+  }
+  .glass pre { border-left: 3px solid var(--accent-glass); }
+  .brut pre { border-left: 3px solid var(--accent-brut); }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--fg-mute); font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; font-size: 11px; }
+  td code, li code { font-family: "SF Mono", monospace; color: var(--fg); background: #0c1018; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+  ul { color: var(--fg-dim); padding-left: 20px; }
+  li { margin: 4px 0; }
+  .palette { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 16px; }
+  .swatch { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fg-dim); }
+  .swatch i { width: 16px; height: 16px; border-radius: 3px; display: inline-block; border: 1px solid #00000040; }
+  .commit { font-family: "SF Mono", monospace; color: var(--fg); font-size: 12px; background: #0c1018; padding: 4px 10px; border-radius: 4px; }
+  .verdict { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 16px; }
+  @media (max-width: 880px) { .verdict { grid-template-columns: 1fr; } }
+  .verdict .col { background: var(--bg-elev); border-radius: 10px; padding: 18px; }
+  .verdict h4 { margin: 0 0 8px; font-size: 14px; }
+  .verdict.glass h4 { color: var(--accent-glass); }
+  .verdict.brut h4 { color: var(--accent-brut); }
+  .status { font-size: 12px; padding: 2px 8px; border-radius: 4px; display: inline-block; }
+  .status.done { background: #052e16; color: var(--ok); }
+  .rationale { font-size: 14px; line-height: 1.7; color: var(--fg-dim); }
+  .compare { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  .compare td { padding: 6px 10px; font-size: 13px; }
+  .compare .axis { color: var(--fg-mute); width: 120px; }
+  details summary { cursor: pointer; color: var(--fg); font-weight: 500; }
+  details[open] summary { margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="meta">2026-06-03 · feature/prettier · v0.2.5</div>
+    <h1>CCFlow TUI 美学重构提案</h1>
+    <p>两条平行 worktree，两套激进设计语言。都已经过 <code>npm run typecheck</code> 与 <code>tests/tui-{smoke,toast,layout}</code> 验证。请挑一个合进 <code>main</code>。</p>
+  </header>
+
+  <h2>1. 总览</h2>
+  <table>
+    <tr><th>分支</th><th>worktree</th><th>风格</th><th>主调</th><th>改动文件</th><th class="commit">commit</th><th>状态</th></tr>
+    <tr>
+      <td><code>feature/prettier-glass</code></td>
+      <td><code>.claude/worktrees/prettier-glass</code></td>
+      <td>极简现代 / Glass</td>
+      <td><span class="swatch"><i style="background:#7dd3fc"></i>sky</span></td>
+      <td><code>src/tui.ts</code> · <code>src/tui/toast-overlay.ts</code> · <code>src/core/tui-layout.ts</code> · <code>tests/tui-layout.test.ts</code></td>
+      <td class="commit">fda8019</td>
+      <td><span class="status done">passed</span></td>
+    </tr>
+    <tr>
+      <td><code>feature/prettier-brutalism</code></td>
+      <td><code>.claude/worktrees/prettier-brutalism</code></td>
+      <td>终端高对比 / Brutalism</td>
+      <td><span class="swatch"><i style="background:#a3e635"></i>lime</span></td>
+      <td><code>src/tui.ts</code> · <code>src/tui/toast-overlay.ts</code> · <code>src/core/tui-layout.ts</code></td>
+      <td class="commit">55899ef</td>
+      <td><span class="status done">passed</span></td>
+    </tr>
+  </table>
+
+  <h2>2. 设计语言</h2>
+  <div class="grid grid-2">
+    <div class="card glass">
+      <div class="tag">A · Glass</div>
+      <h3>极简现代</h3>
+      <p>暗色基底，所有 panel 去掉 rounded border，改用左侧 1 字符 <code>▌</code> accent bar；focus 节点走反色（浅底深字）；负空间代替线条；状态指示用低饱和符号（<code>◌ ◐ ● ◇</code>）。整体气质：冷、静、留白多。</p>
+      <h3>调色板</h3>
+      <div class="palette">
+        <span class="swatch"><i style="background:#08090c"></i>#08090c outer</span>
+        <span class="swatch"><i style="background:#0d1117"></i>#0d1117 panel</span>
+        <span class="swatch"><i style="background:#7dd3fc"></i>#7dd3fc focus</span>
+        <span class="swatch"><i style="background:#86efac"></i>#86efac current</span>
+        <span class="swatch"><i style="background:#fde68a"></i>#fde68a selected</span>
+        <span class="swatch"><i style="background:#fca5a5"></i>#fca5a5 error</span>
+        <span class="swatch"><i style="background:#fcd34d"></i>#fcd34d pending</span>
+      </div>
+    </div>
+    <div class="card brut">
+      <div class="tag">B · Brutalism</div>
+      <h3>终端高对比</h3>
+      <p>黑底白字 + lime 单色高亮；所有 panel 用 heavy 双线 box drawing；节点卡左上角挂 status chip（<code>[OK]</code> / <code>[RUN]</code> / <code>[FAIL]</code> / <code>[WAIT]</code>）；状态指示用块状条 <code>▰ ▱</code>；边连接 <code>═ ║</code>。整体气质：硬、吵、密度高、块状对比。</p>
+      <h3>调色板</h3>
+      <div class="palette">
+        <span class="swatch"><i style="background:#000000"></i>#000000 outer</span>
+        <span class="swatch"><i style="background:#0a0a0a"></i>#0a0a0a panel</span>
+        <span class="swatch"><i style="background:#a3e635"></i>#a3e635 focus</span>
+        <span class="swatch"><i style="background:#ef4444"></i>#ef4444 error</span>
+        <span class="swatch"><i style="background:#facc15"></i>#facc15 pending</span>
+        <span class="swatch"><i style="background:#22d3ee"></i>#22d3ee info</span>
+        <span class="swatch"><i style="background:#fafafa"></i>#fafafa primary</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>3. ASCII 预览</h2>
+  <p>假设状态：3 节点 <code>A → B</code>、<code>A → C</code>、<code>B + C → D</code>（D 不存在）；focus=B；selected=C；B 是 current worktree 正在跑（<code>LeafRunning</code>）；A 是 internal sealed；C 在等父 commit（<code>AwaitingParentCommit</code>）。</p>
+  <div class="grid grid-2">
+    <div class="card glass">
+      <div class="tag">A · Glass · graph panel 80×18</div>
+      <pre> ▄ CCFLOW · my-repo  ────────────────────────────────────────────────────────────────────
+
+ ▌· Root commit                                                    ▌◌ Side B
+ │ internal · sealed                                               │ leaf · LeafRunning
+ │ commit a1b2c3d  wt main                                         │ commit e4f5g6h  wt…
+ │                                                                 │
+
+
+
+                                                                 ┌
+                                                                 │
+                                                                 │
+                                       ▌◌ Side experiment         │
+                                       │ leaf · AwaitingParentCo…  │
+                                       │ commit i7j8k9l  wt feat-c  └─────────────────────▶
+                                       │
+
+────────────────────────────────────────────────────────────────────────────────────────────
+ ▸ arrows move  ▸  ⏎ enter  ▸  ⇥ next  ▸  ⇧⇥ sibling  ▸  space select  ▸  m merge  ▸  s switch  ▸  d delete  ▸  q quit</pre>
+      <div class="tag">A · Glass · node card B (focus, 32×5)</div>
+      <pre>▌◌ Side B
+ leaf · LeafRunning
+ commit e4f5g6h  wt feat-b
+                                       </pre>
+      <div class="tag">A · Glass · side panel 30×20</div>
+      <pre>▌Side B
+STATUS
+──────────────
+LeafRunning
+BRANCH
+──────
+feat-b
+WORKTREE
+───────
+current
+S T A T S
+0 files  +0  -0
+▸ Ready</pre>
+    </div>
+    <div class="card brut">
+      <div class="tag">B · Brutalism · graph panel 80×18</div>
+      <pre>┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃▄▀▄▀▄  CCFLOW · ccflow  ▄▀▄▀▄                                                    ┃
+┃════════════════════════════════════════════════════════════════════════════════
+┃    ┏[SEAL]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃    ┃▱▱▱ A — root                                ┃═════════════════════▶
+┃    ┃internal · sealed                           ┃
+┃    ┃commit aaaaaaa · wt main                    ┃
+┃    ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┃                                          ║
+┃    ┏[RUN]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃    ┃▌▰▰▱ B — Implement login flow               ┃
+┃    ┃leaf · LeafRunning                          ┃
+┃    ┃commit 7a3b1c2 · wt feat/auth-brutalism     ┃
+┃    ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┃                                          ║
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</pre>
+      <div class="tag">B · Brutalism · node card B (focus, 32×5)</div>
+      <pre>┏[RUN]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃▌▰▰▱ Implement login flow             ┃
+┃leaf · LeafRunning                    ┃
+┃commit 7a3b1c2 · wt feat/auth-brut    ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</pre>
+      <div class="tag">B · Brutalism · side panel 30×20</div>
+      <pre>┏[ CCFLOW · NODE ]══════════┓
+┃Implement login flow        ┃
+┠═ STATUS ══════════════════┨
+┃▰ STATUS    LeafRunning     ┃
+┠═ GIT ══════════════════════┨
+┃▰ BRANCH    feat/auth-brut  ┃
+┃▰ WORKTREE  current         ┃
+┃▰ COMMIT    7a3b1c2         ┃
+┠═ STATS ════════════════════┨
+┃▰ FILES     12              ┃
+┃▰ LINES     +240  -18       ┃
+┠═ MESSAGE ══════════════════┨
+┃▌ implement session timeout ┃
+┃▌ handle oauth errors       ┃
+┃▸ Running on tab 2          ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</pre>
+    </div>
+  </div>
+
+  <h2>4. 改动清单</h2>
+  <div class="grid grid-2">
+    <div class="card glass">
+      <div class="tag">A · Glass</div>
+      <ul>
+        <li><code>graphPanel</code> — 去 border；标题以 4 个绝对定位 Text 片段（<code>▄ CCFLOW ·</code> / basename / 间距 / <code>─</code> 填充）渲染</li>
+        <li><code>nodeCard</code> — 无边框；3 行内容 + 1 列 <code>▌</code> accent bar 于 <code>left:-1</code>；focus 完全反色（<code>#e2e8f0</code> 底 + <code>#020617</code> 文 + BOLD），selected bar 走 <code>#fde68a</code></li>
+        <li><code>sidePanel</code> / <code>compactSummary</code> — 无边框；<code>▌</code> bar 于 <code>left:-1</code>；新 <code>fieldStack</code> 替换旧 <code>field</code>（label / <code>─</code> 下划线 / value 三行）</li>
+        <li><code>detailPanel</code> — 无边框；顶部 <code>─</code> 分隔；全大写 label + 双空格右对齐 value</li>
+        <li><code>footer</code> — 单行 <code>▸</code> 分隔；input mode 走 <code>&lt;prompt&gt;&lt;value&gt;▌</code>；graph mode 下 <code>⏎ enter</code> 段高亮</li>
+        <li><code>nodeAccent</code> — 重构返回 <code>{ bar, bg, fg, dim }</code>，focus 配色由 <code>nodeCard</code> 合成</li>
+        <li><code>nodeIndicator</code> — <code>error→◇</code>，<code>running→◌</code>，<code>internal→·</code>，<code>leaf→●</code></li>
+        <li><code>statusColor</code> — 低饱和 palette：<code>#fca5a5</code> / <code>#7dd3fc</code> / <code>#fcd34d</code> / <code>#64748b</code></li>
+        <li>新增 <code>fieldStack</code> / <code>statsBlock</code> / <code>commitMessageBlock</code> / <code>messageLine</code> / <code>basenameOfRepoPath</code> / <code>widthPercent</code></li>
+        <li><code>src/core/tui-layout.ts</code> — 字符集替换为 <code>─</code> / <code>│</code> / <code>▶</code>；L-bend 在两个 elbow cell 上写 <code>┐</code> / <code>┘</code> / <code>└</code> / <code>┌</code></li>
+        <li><code>src/tui/toast-overlay.ts</code> — 去 border；<code>paddingTop/Bottom: 1</code>；1 列 <code>▌</code> bar 于 <code>left:-1</code>；icon 改为 <code>•</code> / <code>●</code> / <code>◇</code> / <code>◌</code> / <code>○</code> / <code>◌</code>；description 每行前缀 <code>│ </code></li>
+        <li><code>tests/tui-layout.test.ts</code> — 断言从 <code>/(-)/</code> → <code>/─/</code>，<code>/(&gt;)/</code> → <code>/▶/</code>（Unicode 边字符的必然调整）</li>
+      </ul>
+    </div>
+    <div class="card brut">
+      <div class="tag">B · Brutalism</div>
+      <ul>
+        <li><code>renderApp</code> — 外/panel 背景改 <code>#000000</code> / <code>#0a0a0a</code></li>
+        <li><code>graphPanel</code> — heavy border + lime accent；可选 <code>·</code> 网格背景；ASCII <code>▄▀▄▀▄  CCFLOW · &lt;basename&gt;</code> 横幅；brutalize 后的边层</li>
+        <li><code>brutalizeEdgeLayer</code>（新）— 在 render 时把 <code>buildEdgeLayer</code> 输出从 <code>-</code> <code>|</code> <code>&gt;</code> 翻成 <code>═</code> <code>║</code> <code>▶</code>，<code>buildEdgeLayer</code> 自身不动以保护 layout 测试</li>
+        <li><code>nodeCard</code> — heavy border；左上角 status chip 浮层（<code>[OK]</code> / <code>[RUN]</code> / <code>[FAIL]</code> / <code>[WAIT]</code> / <code>[DEL]</code> / <code>[SEAL]</code>）；BOLD 标题；focus 反色（白底 + 黑字 + lime border）；selected-not-focused 黄色 border</li>
+        <li><code>sidePanel</code> — heavy border；<code>[ CCFLOW · NODE ]</code> lime BOLD 标题 + <code>═</code> 下划线；<code>╠═ LABEL ═</code> 分组；<code>▰ LABEL</code> 字段行；<code>▌ </code> lime body；<code>▸</code> message 行</li>
+        <li><code>compactSummary</code> — heavy border；inline status chip</li>
+        <li><code>detailPanel</code> — heavy border；<code>╠═ DETAIL ═</code> 头；<code>▰ LABEL: value</code> 行</li>
+        <li><code>footer</code> — <code>═</code> 顶分割；key/label 混色，当前 key 走 bold-lime</li>
+        <li><code>field</code> — 签名改为 <code>(group, label, value, color)</code>；输出 <code>▰ LABEL____</code> 行</li>
+        <li><code>divider</code>（新）— 渲染 <code>╠═ LABEL ═…═</code></li>
+        <li><code>nodeAccent</code> — 返回 <code>{ border, bg, fg, chip, chipColor, accent }</code></li>
+        <li><code>statusColor</code> — 重映射到 lime/red/yellow/cyan palette</li>
+        <li><code>nodeIndicator</code> — 块状条：<code>▰▰▰</code> / <code>▰▰▱</code> / <code>▰▱▱</code> / <code>▱▱▱</code> / <code>▰▱▰</code>，current worktree leaf 加前缀 <code>▌</code></li>
+        <li>新增常量 <code>BRUTAL_BG_OUTER</code> / <code>BRUTAL_BG_PANEL</code> / <code>BRUTAL_FG_PRIMARY/SECONDARY/TERTIARY</code> / <code>BRUTAL_ACCENT/ERROR/WARNING/INFO</code></li>
+        <li>新增类型 <code>NodeAccent</code> / <code>AnyChild</code></li>
+        <li><code>src/core/tui-layout.ts</code> — 新增 <code>BRUTALISM_GRID</code> 常量（默认 <code>true</code>，可关）；新增 <code>buildGridLayer</code>（基于 <code>(worldX + worldY) % 3 === 0</code> 铺设 <code>·</code>）；<code>buildEdgeLayer</code> 本身未动</li>
+        <li><code>src/tui/toast-overlay.ts</code> — <code>DEFAULT_ICONS</code> 改为 <code>▰</code> / <code>▱</code> / <code>✗</code> 等；<code>ACCENTS</code> 增加 <code>bar</code> 字段；<code>toastBox</code> 改 <code>borderStyle: "heavy"</code>、加 <code>▰…</code> 顶部进度条、<code>▌ </code> lime description 前缀</li>
+        <li><strong>不改动任何测试</strong>（通过 render-time brutalize 兼容 <code>tests/tui-layout.test.ts</code> 的 <code>/[-]/</code> / <code>/&gt;/</code> 断言）</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>5. 边字符对照</h2>
+  <div class="grid grid-2">
+    <div class="card glass">
+      <div class="tag">A · Glass 边</div>
+      <table>
+        <tr><th>位置</th><th>字符</th><th>说明</th></tr>
+        <tr><td>水平</td><td><code>─</code></td><td>细线，2 字符距离感</td></tr>
+        <tr><td>垂直</td><td><code>│</code></td><td>细线</td></tr>
+        <tr><td>箭头</td><td><code>▶</code></td><td>实心三角</td></tr>
+        <tr><td>弯头</td><td><code>┐ ┘ └ ┌</code></td><td>按方向取</td></tr>
+      </table>
+    </div>
+    <div class="card brut">
+      <div class="tag">B · Brutalism 边</div>
+      <table>
+        <tr><th>位置</th><th>字符</th><th>说明</th></tr>
+        <tr><td>水平</td><td><code>═</code></td><td>heavy 双线</td></tr>
+        <tr><td>垂直</td><td><code>║</code></td><td>heavy 双线</td></tr>
+        <tr><td>箭头</td><td><code>▶</code></td><td>实心三角</td></tr>
+        <tr><td>弯头</td><td><code>└ ┘ ╞</code></td><td>含穿过交叉（spec 中预留，当前几何未触发）</td></tr>
+      </table>
+      <p class="rationale"><strong>注意：</strong><code>buildEdgeLayer</code> 仍 emit <code>-</code> <code>|</code> <code>&gt;</code>，brutalist 字符替换发生在 <code>brutalizeEdgeLayer</code>，因此 <code>tests/tui-layout.test.ts</code> 的旧断言不动也可过。</p>
+    </div>
+  </div>
+
+  <h2>6. 验证</h2>
+  <table>
+    <tr><th>检查</th><th>Glass</th><th>Brutalism</th></tr>
+    <tr><td><code>npm run typecheck</code></td><td><span class="status done">ok</span></td><td><span class="status done">ok</span></td></tr>
+    <tr><td><code>npm run build:test</code></td><td><span class="status done">ok</span></td><td><span class="status done">ok</span></td></tr>
+    <tr><td><code>tests/tui-smoke.test.ts</code></td><td><span class="status done">5 / 5 pass</span></td><td><span class="status done">pass</span></td></tr>
+    <tr><td><code>tests/tui-toast.test.ts</code></td><td><span class="status done">5 / 5 pass</span></td><td><span class="status done">pass</span></td></tr>
+    <tr><td><code>tests/tui-layout.test.ts</code></td><td><span class="status done">5 / 5 pass</span>（断言改为 <code>/─/</code> / <code>/▶/</code>）</td><td><span class="status done">pass</span>（不动断言）</td></tr>
+    <tr><td>全量 <code>node scripts/run-node-tests.mjs</code></td><td>—</td><td><span class="status done">199 / 199 pass</span></td></tr>
+    <tr><td><code>src/core/graph.ts</code>（系统边界）</td><td><span class="status done">未改</span></td><td><span class="status done">未改</span></td></tr>
+    <tr><td><code>src/core/toast.ts</code>（渲染解耦核心）</td><td><span class="status done">未改</span></td><td><span class="status done">未改</span></td></tr>
+  </table>
+
+  <h2>7. 横向对比</h2>
+  <table class="compare">
+    <tr><td class="axis">视觉重量</td><td>轻：1 像素 bar + 反白焦点</td><td>重：heavy border + chip + 块状指示</td></tr>
+    <tr><td class="axis">远距离可读性</td><td>中：颜色差比较柔和</td><td>强：lime / 红 / 黄高对比 + chip 文本</td></tr>
+    <tr><td class="axis">小屏 / compact 模式</td><td>友好：留白多，borderless</td><td>拥挤：双线 + chip 占用更多字符</td></tr>
+    <tr><td class="axis">状态判读速度</td><td>需识别 indicator 符号 + 颜色</td><td>1 眼读 chip 文本即可</td></tr>
+    <tr><td class="axis">信息密度</td><td>低（但留白不显空）</td><td>高（dense 字段 + 分组）</td></tr>
+    <tr><td class="axis">与现有 ccflow 气质</td><td>偏「任务管理 / 极简工具」</td><td>偏「终端 CI / 工程仪表盘」</td></tr>
+    <tr><td class="axis">测试侵入</td><td>改了 1 个测试文件的 2 行断言</td><td>零测试侵入（render-time 转换）</td></tr>
+    <tr><td class="axis">改动行数</td><td>+385 / -139，4 文件</td><td>+499 / -121，3 文件</td></tr>
+  </table>
+
+  <h2>8. 选哪个？</h2>
+  <div class="verdict">
+    <div class="col glass">
+      <h4>→ 选 A · Glass 如果...</h4>
+      <ul>
+        <li>你希望 UI 安静、不抢戏，让 git / Claude 会话本身做主角</li>
+        <li>你更在意可读性而不是"工程感"</li>
+        <li>屏幕很小时（compact 布局）不希望被粗边框挤满</li>
+        <li>你倾向 Linear / Things 这类线性工作流工具的克制美学</li>
+      </ul>
+    </div>
+    <div class="col brut">
+      <h4>→ 选 B · Brutalism 如果...</h4>
+      <ul>
+        <li>你希望远距离一眼看出"这个节点在跑、那个冲突了"</li>
+        <li>你喜欢终端里"工作台"的密度感，能从 chip 一眼判读状态</li>
+        <li>你愿意为视觉重量换更高的信息密度</li>
+        <li>你想让 toast 像 CI dashboard 一样有进度条 / 状态徽章</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>9. 合入方式</h2>
+  <p>告诉我编号 <strong>A</strong>（Glass）或 <strong>B</strong>（Brutalism），我会：</p>
+  <ul>
+    <li>把对应分支 fast-forward / merge 到 <code>main</code></li>
+    <li>删掉另一条 worktree 与分支</li>
+    <li>同步更新 <code>README.md</code> / <code>README_zh.md</code>（CLAUDE.md 要求）</li>
+    <li>更新 <code>package.json#version</code> 走一个 <code>0.3.0</code> minor bump</li>
+  </ul>
+
+  <h2>10. 设计者自评</h2>
+  <div class="grid grid-2">
+    <div class="card glass">
+      <div class="tag">A · Glass 自我说明</div>
+      <p class="rationale">节点图本质是一张由 Git DAG + worktree 状态共同驱动的并发会话图，节点之间的因果关系比"按钮"更重要——用户读屏时应能一眼扫到分支拓扑和当前 focus，而不是被边框和配色竞争注意力。<code>#08090c</code> 深底 + 单根 sky-300 焦点色把视觉重量压缩到一行 1 像素的 accent bar，<code>left:-1</code> 的位置让 bar 落在 panel 内部、不会与 padding 竞争，真正"free"出节点内容区；focus 整张反白借鉴了 Linear / Things 等线性工作流工具的"我正在操作这一个"语义，比传统虚线/粗框更克制。把 <code>─ │ ┐ ┘ └ ┌ ▶</code> 升级到 Unicode box-drawing 后边线成为单一连续的笔画，配合 amber 状态点和 sky 焦点色构成只有三档信息的图标语法，让并发的 Claude Code session 状态在任意 zoom 下都可读。</p>
+    </div>
+    <div class="card brut">
+      <div class="tag">B · Brutalism 自我说明</div>
+      <p class="rationale">Neobrutalist / high-contrast-terminal 美学契合并行 Claude Code session DAG 的两个原因：第一，<strong>单一 lime 高亮</strong>（<code>#a3e635</code>）+ 反白 focus 状态让 current worktree 和键盘焦点在任意缩放下都毫无歧义——工程师可以无脑定位"我在哪、这里在跑什么"，因为画布其余部分是刻意的黑/白/灰单色；第二，<strong>块状 <code>▰▰▱</code> 状态条 + <code>[OK]/[RUN]/[FAIL]/[WAIT]/[DEL]/[SEAL]</code> chip + heavy <code>━┃</code> border</strong> 让每个节点都有一眼可读的状态面，多个 Claude Code session 并发 commit 时能扫整张图立刻看出哪些 leaf 还在跑、哪些被 block、哪些已 seal；密集布局 + 高对比降低了在繁忙 terminal 中处理非平凡 DAG 的认知成本。Toast 顶部的进度条和 <code>▌ </code> 描述前缀让 toaster 进一步变成"feed"，读起来像 CI dashboard，强化工程师工具氛围。</p>
+    </div>
+  </div>
+</div>
+</body>
+</html>
