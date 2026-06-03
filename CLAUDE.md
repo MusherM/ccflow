@@ -8,7 +8,9 @@ CCFlow 是面向 Claude Code 的节点式会话和 Git 工作流管理器，状�
 npm run dev -- --repo /path/to/repo   # 用 Bun 启动开发版 CLI/TUI
 npm run build                 # 编译发布用 dist/
 npm run typecheck             # 类型检查
-npm run test                  # 运行测试（含真实 claude -p 验证）
+npm run test                  # 运行测试（真实 claude -p 验证会按 prompt 指纹缓存）
+npm run test -- --skip-real-cc   # 跳过真实 Claude Code / cc 测试
+npm run test -- --force-real-cc  # 忽略缓存，强制重跑真实 Claude Code / cc 测试
 npm run pack:dry-run          # 验证 npm 包内容
 npm run verify:install        # 生成 tarball 并在隔离 prefix 全局安装验证
 npm run proto:opentui         # 运行交互原型
@@ -53,13 +55,24 @@ src/
 
 TUI 主循环必须启动 `createToastExpiryScheduler()`，让 toast 到期后即使没有键盘 / resize 事件也能 `tick()` 并触发重绘；`settle` 与意外 renderer 销毁时统一 `dispose`。当前 `ui.message` 仍是侧边面板的持久状态字段，与 toast 浮层并存（不冲突）；适配结果见 `dev/toast-implementation-report.html`。
 
+## 测试分层
+
+测试分为发送 Claude 指令前和发送 Claude 指令后两层：
+
+- **发送指令前**：配置加载、prompt 构造、graph/git/job runner 状态机、TUI 非真实 cc smoke、RecordingClaudeAdapter 参数验证等，每次都正常运行。
+- **发送指令后**：真正调用 `claude -p <prompt>` / `cc` 后验证工作区能被真实 Claude Code 提交干净。这一层成本高，默认用 `.ccflow/test-cache/real-cc.json` 按 prompt SHA-256 指纹缓存。
+- prompt 指纹必须基于实际将发送给 Claude 的内容生成，包括有效配置、节点信息、`git status` 和 `git diff`。测试里要避免随机 node id 等无关随机值污染指纹。
+- 当缓存中同一测试场景的 prompt 指纹不变且之前真实 cc 验证通过时，测试应 `t.skip()` 跳过 post-prompt 层；指纹变化、缓存缺失或传入 `--force-real-cc` 时必须重跑真实 cc。
+- `npm run test -- --skip-real-cc` 用于日常开发，跳过所有真实 Claude Code / cc 测试；`npm run test -- --force-real-cc` 用于发布前、prompt kernel 变化后或需要刷新缓存时。
+- 交互式打开 Claude 的测试没有稳定的 headless prompt，不参与 prompt 指纹缓存，但必须受 `--skip-real-cc` 控制。
+
 ## 规则
 
 - 永远用中文回复用户。
 - 每当更新 `README.md` 时，必须同步更新 `README_zh.md`，保持英文和中文 README 的安装、首次运行、命令、配置和发布说明语义一致。
 - CCFlow 不提供 basic TUI fallback；启动时必须让 OpenTUI 可用，优先通过 `bun` 运行发布入口。
 - `src/core/graph.ts` 中的不变量是系统边界，修改前先补测试。
-- 所有涉及 Claude Code / cc 的测试必须走真实 cc 流程，不能用 fake / stub / mock 替代；直接在沙箱外运行测试，确保 `claude` / `cc` CLI 能被真实调用起来。
+- 所有涉及 Claude Code / cc 的测试必须走真实 cc 流程，不能用 fake / stub / mock 替代；直接在沙箱外运行测试，确保 `claude` / `cc` CLI 能被真实调用起来。日常可用 `npm run test -- --skip-real-cc` 跳过真实 cc 层；默认测试会用 `.ccflow/test-cache/real-cc.json` 按发送给 Claude 的 prompt 指纹跳过已验证且 prompt 未变的 post-prompt 测试，发布前可用 `npm run test -- --force-real-cc` 刷新缓存。
 - npm 发布相关修改必须保持 `package.json#files` 为显式白名单，并用 `npm run pack:dry-run` 检查 tarball 内容。
 - Prompt 配置默认只能追加指导，不允许项目共享配置完整替换 commit / merge kernel prompt；CCFlow 依赖这些 kernel 指令维持 job 后置条件。
 - `.ccflow/` 是运行时状态目录；共享项目配置使用仓库根目录 `.ccflowrc`，本机项目覆盖使用 `.ccflow/config.local.json`。

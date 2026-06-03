@@ -4,12 +4,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { loadConfig } from "../src/core/config.js";
 import { GitAdapter } from "../src/core/git.js";
-import { createPendingChildFromLeaf, sealLeafAndCreateChild } from "../src/core/graph.js";
+import { createInitialState, createPendingChildFromLeaf, sealLeafAndCreateChild } from "../src/core/graph.js";
 import { JobRunner } from "../src/core/jobs.js";
+import { buildCommitPrompt } from "../src/core/prompts.js";
 import { loadOrInitState, saveState, statePath } from "../src/core/storage.js";
 import { emptyStats, type CcflowState } from "../src/core/types.js";
-import { claudeCliConfig, requirePython3, withClaudeSettingsSnapshot, type ClaudeCliConfig } from "./helpers/claude-cli.js";
+import { claudeCliConfig, realClaudePromptGate, requirePython3, withClaudeSettingsSnapshot, type ClaudeCliConfig } from "./helpers/claude-cli.js";
 
 const tuiSmokeTest = canRunOpenTuiRenderer() ? test : test.skip;
 
@@ -99,14 +101,28 @@ tuiSmokeTest("TUI tab creates a new leaf and delegates README commit to Claude C
   git.ensureRepo(repoRoot);
   fs.writeFileSync(path.join(repoRoot, "README.md"), "initial\n");
   git.commit(repoRoot, "test: initial readme");
-  loadOrInitState({
+  const state = createInitialState({
     repoRoot,
     branch: git.currentBranch(repoRoot),
     commitHash: git.currentCommit(repoRoot),
+    now: "2026-01-01T00:00:00.000Z",
+    idFactory: (prefix) => `${prefix}_real_cc_tui_commit`,
   });
+  saveState(state);
 
   const beforeCommit = git.currentCommit(repoRoot);
   fs.appendFileSync(path.join(repoRoot, "README.md"), "updated before Claude TUI commit\n");
+  const prompt = buildCommitPrompt({
+    config: loadConfig({ repoRoot }).config,
+    node: state.nodes[state.currentNodeId]!,
+    gitStatus: git.statusShort(repoRoot),
+    gitDiff: git.diff(repoRoot),
+  });
+  const gate = realClaudePromptGate("tui-smoke.tab.commit", prompt);
+  if (!gate.shouldRun) {
+    t.skip(gate.reason);
+    return;
+  }
 
   const result = withClaudeSettingsSnapshot(() =>
     runTuiPty(
@@ -135,6 +151,7 @@ tuiSmokeTest("TUI tab creates a new leaf and delegates README commit to Claude C
   assert.notEqual(git.currentCommit(repoRoot), beforeCommit);
   assert.ok(git.lastCommitMessage(repoRoot).length > 0);
   assert.match(fs.readFileSync(path.join(repoRoot, "README.md"), "utf8"), /updated before Claude TUI commit/);
+  gate.markPassed();
 });
 
 tuiSmokeTest("TUI shows blocked state instead of entering a pending child", () => {

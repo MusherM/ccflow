@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 
 export interface ClaudeCliConfig {
@@ -13,6 +14,10 @@ let initialClaudeSettings: string | null = null;
 let cleanupRegistered = false;
 
 export function claudeCliConfig(): ClaudeCliConfig {
+  if (process.env.CCFLOW_TEST_SKIP_REAL_CC === "1") {
+    throw new Error("real Claude Code tests skipped by --skip-real-cc");
+  }
+
   const env = ensureClaudeTestHome();
   restoreClaudeSettings();
   const candidate = process.env.CCFLOW_CLAUDE_BIN ?? "claude";
@@ -44,6 +49,9 @@ export async function withClaudeCliEnv<T>(config: ClaudeCliConfig, fn: () => T |
     "CCFLOW_REAL_HOME",
     "CCFLOW_CLAUDE_BIN",
     "CCFLOW_CLAUDE_ARGS",
+    "CCFLOW_TEST_REAL_CC_CACHE",
+    "CCFLOW_TEST_SKIP_REAL_CC",
+    "CCFLOW_TEST_FORCE_REAL_CC",
   ]);
   restoreClaudeSettings();
   applyEnv(config.env);
@@ -63,6 +71,41 @@ export function withClaudeSettingsSnapshot<T>(fn: () => T): T {
   } finally {
     restoreClaudeSettings();
   }
+}
+
+export function realClaudePromptGate(name: string, prompt: string): {
+  shouldRun: boolean;
+  reason: string;
+  promptHash: string;
+  markPassed: () => void;
+} {
+  const promptHash = hashPrompt(prompt);
+  if (process.env.CCFLOW_TEST_FORCE_REAL_CC === "1") {
+    return {
+      shouldRun: true,
+      reason: `forced real Claude Code test for ${name}`,
+      promptHash,
+      markPassed: () => markRealClaudePromptPassed(name, promptHash),
+    };
+  }
+
+  const cache = readRealClaudeCache();
+  const entry = cache.entries[name];
+  if (entry?.promptHash === promptHash) {
+    return {
+      shouldRun: false,
+      reason: `real Claude Code post-prompt layer already passed for unchanged prompt ${promptHash.slice(0, 12)}`,
+      promptHash,
+      markPassed: () => {},
+    };
+  }
+
+  return {
+    shouldRun: true,
+    reason: `real Claude Code prompt changed or has no cache for ${name}`,
+    promptHash,
+    markPassed: () => markRealClaudePromptPassed(name, promptHash),
+  };
 }
 
 export function requirePython3(): void {
@@ -106,14 +149,20 @@ function ensureClaudeTestHome(): NodeJS.ProcessEnv {
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "ccflow-claude-home-"));
   const fakeXdgHome = path.join(fakeHome, ".config");
   const fakeCcflowConfig = path.join(fakeHome, ".ccflowrc");
-  const preservedClaudeBin = process.env.CCFLOW_CLAUDE_BIN;
-  const preservedClaudeArgs = process.env.CCFLOW_CLAUDE_ARGS;
+  const preserved = snapshotEnv([
+    "CCFLOW_CLAUDE_BIN",
+    "CCFLOW_CLAUDE_ARGS",
+    "CCFLOW_TEST_REAL_CC_CACHE",
+    "CCFLOW_TEST_SKIP_REAL_CC",
+    "CCFLOW_TEST_FORCE_REAL_CC",
+  ]);
 
   for (const key of Object.keys(process.env)) {
     if (key.startsWith("CCFLOW_")) delete process.env[key];
   }
-  if (preservedClaudeBin) process.env.CCFLOW_CLAUDE_BIN = preservedClaudeBin;
-  if (preservedClaudeArgs) process.env.CCFLOW_CLAUDE_ARGS = preservedClaudeArgs;
+  for (const [name, value] of Object.entries(preserved)) {
+    restoreEnv(name, value);
+  }
 
   fs.mkdirSync(fakeXdgHome, { recursive: true });
   copyClaudeSettings(realHome, fakeHome);
@@ -151,7 +200,19 @@ function snapshotEnv(names: string[]): Record<string, string | undefined> {
 }
 
 function applyEnv(env: NodeJS.ProcessEnv): void {
-  for (const name of ["HOME", "USERPROFILE", "XDG_CONFIG_HOME", "CCFLOW_CONFIG", "CCFLOW_TEST_HOME", "CCFLOW_REAL_HOME", "CCFLOW_CLAUDE_BIN", "CCFLOW_CLAUDE_ARGS"]) {
+  for (const name of [
+    "HOME",
+    "USERPROFILE",
+    "XDG_CONFIG_HOME",
+    "CCFLOW_CONFIG",
+    "CCFLOW_TEST_HOME",
+    "CCFLOW_REAL_HOME",
+    "CCFLOW_CLAUDE_BIN",
+    "CCFLOW_CLAUDE_ARGS",
+    "CCFLOW_TEST_REAL_CC_CACHE",
+    "CCFLOW_TEST_SKIP_REAL_CC",
+    "CCFLOW_TEST_FORCE_REAL_CC",
+  ]) {
     restoreEnv(name, env[name]);
   }
 }
@@ -172,4 +233,39 @@ function registerFakeHomeCleanup(fakeHome: string): void {
       // Best-effort cleanup only. A transient temp file should not mask test results.
     }
   });
+}
+
+interface RealClaudeCache {
+  version: 1;
+  entries: Record<string, { promptHash: string; passedAt: string }>;
+}
+
+function hashPrompt(prompt: string): string {
+  return createHash("sha256").update(prompt).digest("hex");
+}
+
+function readRealClaudeCache(): RealClaudeCache {
+  const file = process.env.CCFLOW_TEST_REAL_CC_CACHE;
+  if (!file || !fs.existsSync(file)) return { version: 1, entries: {} };
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as RealClaudeCache;
+    if (parsed.version === 1 && parsed.entries && typeof parsed.entries === "object") return parsed;
+  } catch {
+    // Ignore corrupt cache files; the real test will run and rewrite the marker.
+  }
+  return { version: 1, entries: {} };
+}
+
+function markRealClaudePromptPassed(name: string, promptHash: string): void {
+  const file = process.env.CCFLOW_TEST_REAL_CC_CACHE;
+  if (!file) return;
+
+  const cache = readRealClaudeCache();
+  cache.entries[name] = {
+    promptHash,
+    passedAt: new Date().toISOString(),
+  };
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(cache, null, 2)}\n`);
 }
